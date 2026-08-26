@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# the-office's own pre-commit sensor. Installed with:
+#   git config core.hooksPath .githooks
+#
+# Fast controls only. Anything slower than a couple of seconds gets bypassed
+# with --no-verify, which is worse than having no hook at all.
+set -euo pipefail
+
+fail=0
+
+# The CLI is the whole deterministic core — a syntax error here breaks every role.
+if ! node --check payload/bin/office.mjs; then
+  echo "pre-commit: payload/bin/office.mjs does not parse" >&2
+  fail=1
+fi
+
+# A malformed pack manifest fails silently at install time, which is the worst
+# possible moment to find out.
+for f in packs/*/pack.json; do
+  node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" 2>/dev/null || {
+    echo "pre-commit: $f is not valid JSON" >&2; fail=1; }
+done
+
+# The board's own sensor, when the board changed.
+if git diff --cached --name-only | grep -q '^\.the-office/'; then
+  node payload/bin/office.mjs validate || fail=1
+fi
+
+exit $fail

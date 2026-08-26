@@ -1,0 +1,13 @@
+{
+  "name": "the-office",
+  "version": "0.1.0",
+  "description": "AI-assisted development workflow built on harness engineering",
+  "private": true,
+  "type": "module",
+  "bin": { "office": "payload/bin/office.mjs" },
+  "scripts": {
+    "test": "bash tests/run.sh",
+    "office": "node payload/bin/office.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
