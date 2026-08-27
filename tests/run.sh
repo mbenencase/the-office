@@ -51,7 +51,7 @@ WORK=$(mktemp -d); cp -r "$ROOT/tests/fixtures/good/.the-office" "$WORK/"
 expect_exit 0 "claim pending -> in-progress"     "$WORK" claim sample/task-01
 expect_exit 1 "refuses to claim twice"           "$WORK" claim sample/task-01
 expect_exit 0 "review in-progress -> review"     "$WORK" review sample/task-01
-expect_exit 0 "done review -> completed"         "$WORK" done sample/task-01
+expect_exit 0 "done review -> completed"         "$WORK" "done" sample/task-01
 if grep -q '^attempts: 1$' "$WORK/.the-office/features/sample/task-01.md"; then ok "increments attempts"; else bad "increments attempts"; fi
 if grep -q '^status: completed$' "$WORK/.the-office/features/sample/task-01.md"; then ok "persists status"; else bad "persists status"; fi
 if grep -q '^## Notes$' "$WORK/.the-office/features/sample/task-01.md"; then ok "preserves the body across rewrites"; else bad "preserves the body across rewrites"; fi
@@ -63,7 +63,7 @@ rm -rf "$WORK"
 
 echo
 echo "scope — allowlist enforcement"
-WORK=$(mktemp -d); cd "$WORK" && git init -q . && cd - >/dev/null
+WORK=$(mktemp -d); (cd "$WORK" && git init -q .)
 cp -r "$ROOT/tests/fixtures/good/.the-office" "$WORK/"
 mkdir -p "$WORK/src" "$WORK/.claude/agents" "$WORK/other"
 echo "ok" > "$WORK/src/a.txt"
@@ -77,10 +77,13 @@ expect_exit 0 "passes when changes are inside scope" "$WORK" scope sample/task-0
 echo "stray" > "$WORK/other/b.txt"
 expect_exit 1 "fails when a change escapes scope"    "$WORK" scope sample/task-01
 expect_match "other/b.txt" "names the offending file" "$WORK" scope sample/task-01
-if (cd "$WORK" && $OFFICE scope sample/task-01 2>&1) | grep -q 'src/a.txt'; then
+# Capture once, then match. Piping a node process into `grep -q` races: grep
+# exits on first match, node takes SIGPIPE, and pipefail reports 141 as "no match".
+scope_out="$( (cd "$WORK" && $OFFICE scope sample/task-01) 2>&1 || true)"
+if printf '%s\n' "$scope_out" | grep -q 'src/a.txt'; then
   bad "does not flag in-scope files" "src/a.txt was listed as out of scope"
 else ok "does not flag in-scope files"; fi
-if (cd "$WORK" && $OFFICE scope sample/task-01 2>&1) | grep -q '\.claude/'; then
+if printf '%s\n' "$scope_out" | grep -q '\.claude/'; then
   bad "ignores the installed harness payload" ".claude/ was counted as task work"
 else ok "ignores the installed harness payload"; fi
 rm -rf "$WORK"
@@ -128,12 +131,12 @@ if [ -z "$missing" ]; then ok "every pack control's files exist"; else bad "ever
 # Agents and skills are useless to Claude Code without frontmatter.
 badfm=""
 for f in "$ROOT"/payload/agents/*.md; do
-  head -1 "$f" | grep -q '^---$' || badfm="$badfm $(basename "$f")"
+  [ "$(head -1 "$f")" = "---" ] || badfm="$badfm $(basename "$f")"
   grep -q '^name: ' "$f" || badfm="$badfm $(basename "$f"):name"
   grep -q '^description: ' "$f" || badfm="$badfm $(basename "$f"):description"
 done
 for f in "$ROOT"/payload/skills/*/SKILL.md; do
-  head -1 "$f" | grep -q '^---$' || badfm="$badfm $(basename "$(dirname "$f")")"
+  [ "$(head -1 "$f")" = "---" ] || badfm="$badfm $(basename "$(dirname "$f")")"
   grep -q '^description: ' "$f" || badfm="$badfm $(basename "$(dirname "$f")")):description"
 done
 if [ -z "$badfm" ]; then ok "every agent and skill has frontmatter"; else bad "every agent and skill has frontmatter" "$badfm"; fi
@@ -156,7 +159,7 @@ for f in "$ROOT"/.github/workflows/*.yml; do
   else bad "$(basename "$f") is valid YAML"; fi
 done
 
-# shellcheck is not always installed locally; bash -n catches syntax errors
+# Note: shellcheck is not always present locally; bash -n catches syntax errors
 # either way, and CI runs the full shellcheck pass.
 for f in "$ROOT/install.sh" "$ROOT/tests/run.sh" "$ROOT/scripts/bump.sh" "$ROOT/.githooks/pre-commit"; do
   if bash -n "$f" 2>/dev/null; then ok "$(basename "$f") parses"; else bad "$(basename "$f") parses"; fi

@@ -73,14 +73,19 @@ jobs:
           echo "T=$T" >> "$GITHUB_ENV"
 
       - name: the installed CLI works from the installed layout
+        # Run from inside the scratch repo. office resolves the repo root by
+        # walking up from cwd, so running these from the workspace would target
+        # this repository's own board instead of the one under test.
+        working-directory: ${{ env.T }}
         run: |
           set -euo pipefail
-          "$T/.claude/office/bin/office" --version
-          "$T/.claude/office/bin/office" audit --json | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))'
-          "$T/.claude/office/bin/office" pack list
-          "$T/.claude/office/bin/office" init
-          "$T/.claude/office/bin/office" feature new demo --title Demo
-          "$T/.claude/office/bin/office" task new demo --title "A task"
+          ./.claude/office/bin/office --version
+          ./.claude/office/bin/office audit --json | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))'
+          ./.claude/office/bin/office pack list
+          ./.claude/office/bin/office init
+          ./.claude/office/bin/office feature new demo --title Demo
+          ./.claude/office/bin/office task new demo --title "A task"
+          test -f .the-office/features/demo/task-01.md
 
       - name: upgrade preserves board state
         run: |
@@ -173,7 +178,11 @@ jobs:
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
           go vet ./...
           # With no rules declared it must skip cleanly, not fail to build.
-          go test ./... -run TestArchitecture -v 2>&1 | grep -q 'SKIP\|ok'
+          # Capture first: piping into `grep -q` closes the pipe on first match
+          # and go test dies of SIGPIPE, which pipefail reports as exit 141.
+          out="$(go test ./... -run TestArchitecture -v 2>&1)"
+          echo "$out"
+          echo "$out" | grep -qE 'SKIP|^ok'
 
       - name: rust — rustfmt and clippy parse their configs
         if: matrix.stack == 'rust'

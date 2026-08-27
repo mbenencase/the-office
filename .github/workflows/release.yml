@@ -36,7 +36,10 @@ jobs:
           set -euo pipefail
           T="$(mktemp -d)"; git -C "$T" init -q
           ./install.sh "$T"
-          "$T/.claude/office/bin/office" --version | grep -qx "$VERSION"
+          got="$("$T/.claude/office/bin/office" --version)"
+          if [ "$got" != "$VERSION" ]; then
+            echo "installed CLI reports $got, expected $VERSION" >&2; exit 1
+          fi
 
       - name: extract this version's changelog section
         run: |

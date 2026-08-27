@@ -331,7 +331,16 @@ cmds.init = (argv) => {
   const root = findRoot() ?? process.cwd();
   const dir = path.join(root, '.the-office');
   if (fs.existsSync(dir) && !argv.includes('--force')) {
-    die(`.the-office/ already exists at ${root}. Pass --force to overwrite config.`);
+    // Say where it found the board. Resolving upward is correct — nested boards
+    // would be worse — but silently targeting an ancestor is confusing enough
+    // that it cost a CI debugging cycle.
+    const here = path.resolve(root) === path.resolve(process.cwd());
+    die(here
+      ? `.the-office/ already exists here. Pass --force to overwrite config.`
+      : `.the-office/ already exists in a parent directory: ${root}\n`
+        + `You are in ${process.cwd()}.\n`
+        + `office resolves the board by walking up, so this repo already has one. `
+        + `cd there to work on it, or --force to overwrite that config.`);
   }
   fs.mkdirSync(path.join(dir, 'features'), { recursive: true });
   const cfg = path.join(dir, 'config.yml');

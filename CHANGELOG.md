@@ -22,6 +22,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fixed
 - Pack configs were never executed against their tools. The `packs` CI job now
   runs ruff, eslint, gofmt/vet, and rustfmt against each pack's config.
+- Pipelines into `grep -q` could report a spurious failure: `grep` exits on the
+  first match, the upstream process takes SIGPIPE, and `pipefail` surfaces it as
+  exit 141. Hardened in the pre-commit hook, `tests/run.sh`, and both workflows.
+- `office init` now says when it found an existing board in a *parent*
+  directory rather than only printing the path it resolved to.
 
 ## [0.1.0] — 2026-08-26
 
