@@ -30,8 +30,13 @@ node payload/bin/office.mjs help         # the CLI, run from this repo
 - **Anything deterministic goes in the CLI, not in a prompt.** If a model is
   reasoning about something a CPU could settle — board state, dependency order,
   whether a check passed — that logic is in the wrong place.
-- **`VERSION` and the `VERSION` constant in `office.mjs` must match.**
-  `tests/run.sh` enforces it.
+- **`VERSION` is the single source of truth**, propagated to `package.json` and
+  the `VERSION` constant in `office.mjs`. Never edit any of the three by hand —
+  `scripts/bump.sh` writes all of them, and both `tests/run.sh` and the
+  pre-commit hook fail on drift.
+- **Write release notes under `## [Unreleased]` in `CHANGELOG.md` as you go.**
+  `bump.sh` refuses to cut a release from an empty Unreleased section, and the
+  release workflow publishes that section verbatim as the GitHub release notes.
 - **Every agent needs `name`, `description`, and a model alias** of `haiku`,
   `sonnet`, `opus`, or `inherit`. An unknown alias falls back silently.
 - **Every skill needs a `description`** — it is what Claude Code matches against

@@ -1,0 +1,186 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref makes the older run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: sensors (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor declared in package.json engines. If the suite breaks
+        # there, raise the floor deliberately rather than dropping the job.
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: sensor suite
+        run: bash tests/run.sh
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # install.sh is the least-tested surface in the repo and it is shell.
+      # This closes that gap.
+      - name: shellcheck every script
+        run: |
+          shellcheck --version
+          shellcheck -S warning \
+            install.sh \
+            tests/run.sh \
+            scripts/bump.sh \
+            .githooks/pre-commit
+
+  install:
+    name: install / upgrade / uninstall
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: clean install into a fresh repo
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          git -C "$T" init -q
+          echo '{"name":"demo","type":"module"}' > "$T/package.json"
+          git -C "$T" add -A
+          git -C "$T" -c user.email=ci@x -c user.name=ci commit -qm init
+
+          ./install.sh "$T"
+          test -x "$T/.claude/office/bin/office"
+          test -f "$T/.claude/agents/office-judge.md"
+          test -d "$T/.claude/skills/office"
+          test -f "$T/.claude/office/packs/go/pack.json"
+          echo "T=$T" >> "$GITHUB_ENV"
+
+      - name: the installed CLI works from the installed layout
+        run: |
+          set -euo pipefail
+          "$T/.claude/office/bin/office" --version
+          "$T/.claude/office/bin/office" audit --json | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))'
+          "$T/.claude/office/bin/office" pack list
+          "$T/.claude/office/bin/office" init
+          "$T/.claude/office/bin/office" feature new demo --title Demo
+          "$T/.claude/office/bin/office" task new demo --title "A task"
+
+      - name: upgrade preserves board state
+        run: |
+          set -euo pipefail
+          ./install.sh "$T" --force
+          test -f "$T/.the-office/features/demo/task-01.md"
+          test -f "$T/.the-office/config.yml"
+
+      - name: uninstall removes the payload and keeps the board
+        run: |
+          set -euo pipefail
+          ./install.sh "$T" --uninstall
+          test ! -d "$T/.claude/office"
+          test ! -f "$T/.claude/agents/office-judge.md"
+          # Board state, harness manifest, and findings belong to the repo.
+          test -f "$T/.the-office/features/demo/task-01.md"
+
+      - name: refuses to install into its own repo
+        run: |
+          if ./install.sh . 2>/dev/null; then
+            echo "install.sh should refuse its own repo" >&2; exit 1
+          fi
+
+  packs:
+    name: pack configs (${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [python, typescript, go, rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every pack ships a tool config that was never executed before this job.
+      # A syntax error in one of them would otherwise surface at install time in
+      # someone else's repository.
+
+      - name: python — ruff parses its config and passes on clean code
+        if: matrix.stack == 'python'
+        run: |
+          set -euo pipefail
+          pipx install ruff
+          T="$(mktemp -d)"; cp packs/python/ruff.toml "$T/"
+          cat > "$T/sample.py" <<'PY'
+          """A clean module, to prove the config does not false-positive."""
+
+          from pathlib import Path
+
+
+          def read(path: Path) -> str:
+              with path.open(encoding="utf-8") as fh:
+                  return fh.read()
+          PY
+          cd "$T" && ruff check . && ruff format --check .
+
+      - name: typescript — eslint and prettier parse their configs
+        if: matrix.stack == 'typescript'
+        uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: typescript — run them
+        if: matrix.stack == 'typescript'
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          cp packs/typescript/eslint.config.mjs packs/typescript/.prettierrc.json "$T/"
+          cat > "$T/sample.js" <<'JS'
+          const greet = (name) => `hello ${name}`;
+          export default greet;
+          JS
+          cd "$T"
+          npm init -y >/dev/null
+          npm i -D eslint @eslint/js prettier >/dev/null 2>&1
+          npx eslint sample.js
+          npx prettier --check sample.js
+          # tsconfig.strict.json must at least be valid JSON with comments stripped.
+          node -e "JSON.parse(require('fs').readFileSync('$GITHUB_WORKSPACE/packs/typescript/tsconfig.strict.json','utf8'))"
+
+      - name: go — the architecture fitness function compiles and runs
+        if: matrix.stack == 'go'
+        uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - name: go — run it
+        if: matrix.stack == 'go'
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          cp packs/go/arch_test.go packs/go/.golangci.yml "$T/"
+          cd "$T"
+          go mod init example.com/arch >/dev/null
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+          # With no rules declared it must skip cleanly, not fail to build.
+          go test ./... -run TestArchitecture -v 2>&1 | grep -q 'SKIP\|ok'
+
+      - name: rust — rustfmt and clippy parse their configs
+        if: matrix.stack == 'rust'
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"; cd "$T"
+          cargo init -q --name sample
+          cp "$GITHUB_WORKSPACE/packs/rust/rustfmt.toml" "$GITHUB_WORKSPACE/packs/rust/clippy.toml" .
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
