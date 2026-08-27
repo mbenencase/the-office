@@ -37,11 +37,20 @@ node payload/bin/office.mjs help         # the CLI, run from this repo
   whether a check passed — that logic is in the wrong place.
 - **`VERSION` is the single source of truth**, propagated to `package.json` and
   the `VERSION` constant in `office.mjs`. Never edit any of the three by hand —
-  `scripts/bump.sh` writes all of them, and both `tests/run.sh` and the
+  `scripts/release.mjs` writes all of them, and both `tests/run.sh` and the
   pre-commit hook fail on drift.
-- **Write release notes under `## [Unreleased]` in `CHANGELOG.md` as you go.**
-  `bump.sh` refuses to cut a release from an empty Unreleased section, and the
-  release workflow publishes that section verbatim as the GitHub release notes.
+- **Write Conventional Commits.** The release version and the release notes are
+  both derived from commit subjects since the last tag, so `feat:` vs `fix:` vs
+  `feat!:` decides what number ships. `.githooks/commit-msg` warns on a
+  non-conventional subject without blocking.
+- **A merge to `main` touching `payload/`, `packs/`, `templates/`,
+  `install.sh`, or `VERSION` publishes a release.** Nothing else does. Keep that
+  path list in `release.yml` in step with what `install.sh` actually copies —
+  if a new shipped directory is added and not listed, changes to it ship
+  silently without a version.
+- **`CHANGELOG.md` has no hand-maintained Unreleased section.** Generated
+  sections are inserted beneath the `<!-- next-release -->` marker; removing
+  that marker breaks every future release.
 - **Every agent needs `name`, `description`, and a model alias** of `haiku`,
   `sonnet`, `opus`, or `inherit`. An unknown alias falls back silently.
 - **Every skill needs a `description`** — it is what Claude Code matches against

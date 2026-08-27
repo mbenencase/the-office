@@ -161,26 +161,23 @@ done
 
 # Note: shellcheck is not always present locally; bash -n catches syntax errors
 # either way, and CI runs the full shellcheck pass.
-for f in "$ROOT/install.sh" "$ROOT/tests/run.sh" "$ROOT/scripts/bump.sh" "$ROOT/.githooks/pre-commit"; do
+for f in "$ROOT/install.sh" "$ROOT/tests/run.sh" "$ROOT/.githooks/pre-commit" "$ROOT/.githooks/commit-msg"; do
   if bash -n "$f" 2>/dev/null; then ok "$(basename "$f") parses"; else bad "$(basename "$f") parses"; fi
 done
 if command -v shellcheck >/dev/null 2>&1; then
-  if shellcheck -S warning "$ROOT/install.sh" "$ROOT/scripts/bump.sh" "$ROOT/.githooks/pre-commit" >/dev/null 2>&1; then
+  if shellcheck -S warning "$ROOT/install.sh" "$ROOT/tests/run.sh" "$ROOT/.githooks/pre-commit" "$ROOT/.githooks/commit-msg" >/dev/null 2>&1; then
     ok "shellcheck clean"
-  else bad "shellcheck clean" "run: shellcheck -S warning install.sh scripts/bump.sh .githooks/pre-commit"; fi
+  else bad "shellcheck clean" "run: shellcheck -S warning install.sh tests/run.sh .githooks/*"; fi
 else
   ok "shellcheck skipped (not installed; CI runs it)"
 fi
 
-# The release workflow extracts notes by awk. If that yields nothing, the tag
-# publishes an empty release — which is only discovered after it is pushed.
-NOTES="$(awk -v v="$(cat "$ROOT/VERSION")" '
-  $0 ~ "^## \\["v"\\]" {f=1; next}
-  f && /^## / {exit}
-  f {print}
-' "$ROOT/CHANGELOG.md" | grep -c . || true)"
-if [ "$NOTES" -gt 0 ]; then ok "release notes extract for the current VERSION ($NOTES lines)"
-else bad "release notes extract for the current VERSION" "the awk in release.yml would publish an empty release"; fi
+# The release engine runs on every merge to main. If it cannot produce a plan,
+# the next merge fails to publish -- and that is only discovered after merging.
+if node "$ROOT/scripts/release.mjs" >/tmp/office-rel.log 2>&1; then
+  ok "release.mjs produces a plan ($(grep -m1 '^version' /tmp/office-rel.log | tr -s ' '))"
+else bad "release.mjs produces a plan" "$(tail -2 /tmp/office-rel.log | tr '\n' ' ')"; fi
+rm -f /tmp/office-rel.log
 echo
 echo "docs — diagrams parse"
 # A broken mermaid block renders as a grey error box on GitHub and fails nothing.
@@ -208,8 +205,8 @@ else bad "VERSION is semver" "got '$V'"; fi
 if grep -qE "^## \[$V\]" "$ROOT/CHANGELOG.md"; then ok "CHANGELOG has a section for $V"
 else bad "CHANGELOG has a section for $V" "a release with no notes cannot produce release notes"; fi
 
-if grep -q '^## \[Unreleased\]' "$ROOT/CHANGELOG.md"; then ok "CHANGELOG has an Unreleased section"
-else bad "CHANGELOG has an Unreleased section" "bump.sh needs it to cut a release"; fi
+if grep -q '^<!-- next-release -->$' "$ROOT/CHANGELOG.md"; then ok "CHANGELOG has the next-release marker"
+else bad "CHANGELOG has the next-release marker" "release.mjs inserts each section beneath it"; fi
 
 echo
 printf '\n%s passed, %s failed\n\n' "$PASS" "$FAIL"

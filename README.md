@@ -191,37 +191,61 @@ nothing but the Node that Claude Code already requires.
 
 ## Releasing
 
-`VERSION` is the single source of truth. It is propagated to `package.json` and
-the `VERSION` constant in `payload/bin/office.mjs`; `tests/run.sh` and the
-pre-commit hook both fail if they drift apart, so `scripts/bump.sh` is the only
-supported way to change it.
+**Releases are automatic.** Every merge to `main` that touches the shipped
+surface — `payload/`, `packs/`, `templates/`, `install.sh`, `VERSION` — runs the
+full CI suite and, if it passes, publishes a release. A README, docs, or CI-only
+change publishes nothing; version churn for a typo fix makes the series
+meaningless.
+
+The version comes from [Conventional Commits](https://www.conventionalcommits.org/)
+since the last tag:
+
+| Commit | Bump | Notes section |
+|---|---|---|
+| `feat: …` | minor | Added |
+| `fix: …` | patch | Fixed |
+| `perf:` `refactor:` `revert:` | patch | Changed |
+| `docs:` `test:` `ci:` `chore:` `build:` `style:` | patch | Internal |
+| `feat!: …` or `BREAKING CHANGE:` in the body | **major** | Breaking |
+| anything without a type prefix | patch | Changed |
+
+So the commit message *is* the release note. `.githooks/commit-msg` warns when a
+subject is not conventional — advisory, not blocking, because a hook that blocks
+over a message is a hook people turn off.
+
+`scripts/release.mjs` is the single implementation of "what version comes next
+and what does it contain". CI calls it; so can you:
 
 ```bash
-# 1. write the notes under ## [Unreleased] in CHANGELOG.md
-# 2. cut the release
-scripts/bump.sh patch          # or minor | major | X.Y.Z
-scripts/bump.sh patch --dry-run   # see what it would do first
-
-# 3. publish
-git push && git push origin v$(cat VERSION)
+node scripts/release.mjs                     # plan only, changes nothing
+node scripts/release.mjs --bump minor        # what a forced minor would do
+node scripts/release.mjs --write --commit --tag   # cut one by hand
 ```
 
-`bump.sh` refuses a dirty tree, refuses an empty Unreleased section, runs the
-sensor suite before tagging, and dates the release section as it moves it.
+There is no hand-maintained `Unreleased` section in `CHANGELOG.md`. Under
+auto-release `main` is always released, so it would always be empty; each
+generated section is inserted beneath the `<!-- next-release -->` marker.
 
-The `release` workflow fires on the `v*` tag: it verifies the tag matches
-`VERSION`, runs the suite, smoke-tests an install from the tagged tree, extracts
-that version's changelog section as the release notes, and publishes a tarball
-of the installable payload.
+**Forcing a level.** Run the `release` workflow via *workflow_dispatch* and pick
+`patch`, `minor`, or `major` to override what the commits imply.
+
+**Loop safety.** The release commit touches `VERSION`, which is in the trigger's
+path filter. It does not re-trigger, because a push authenticated with
+`GITHUB_TOKEN` never starts a workflow; the `[skip ci]` marker in the commit
+subject is a second guard.
 
 ## CI
 
 | Job | What it covers |
 |---|---|
 | `sensors` | the suite on Node 18, 20, 22 |
-| `shellcheck` | `install.sh`, `tests/run.sh`, `bump.sh`, the pre-commit hook |
+| `shellcheck` | `install.sh`, `tests/run.sh`, both git hooks |
 | `install` | clean install, upgrade preserving board state, uninstall keeping `.the-office/` |
+| `docs` | every ```mermaid block in the README actually parses |
 | `packs` | each pack's config run against the real tool — ruff, eslint, gofmt/vet, rustfmt, clippy |
+
+`release` reuses this whole workflow via `workflow_call` rather than a subset,
+so what gets published is exactly what CI is green on.
 
 The `packs` job matters most: those configs ship into other people's
 repositories, and before it existed nothing had ever executed them.

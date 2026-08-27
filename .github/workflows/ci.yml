@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The release workflow gates on this, so a release never publishes from a
+  # tree the suite has not passed.
+  workflow_call:
 
 # A newer push to the same ref makes the older run's answer irrelevant.
 concurrency:
@@ -45,8 +48,8 @@ jobs:
           shellcheck -S warning \
             install.sh \
             tests/run.sh \
-            scripts/bump.sh \
-            .githooks/pre-commit
+            .githooks/pre-commit \
+            .githooks/commit-msg
 
   install:
     name: install / upgrade / uninstall

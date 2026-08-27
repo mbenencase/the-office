@@ -42,6 +42,8 @@
 | Workflow YAML validity | computational-sensor | in `tests/run.sh` | unreleased |
 | Tag/VERSION agreement | computational-sensor | `release.yml` first step | unreleased |
 | README diagrams parse | computational-sensor | `scripts/check-mermaid.mjs` | unreleased |
+| Release plan is producible | computational-sensor | `scripts/release.mjs` in `tests/run.sh` | unreleased |
+| Conventional-commit subjects | computational-guide | `.githooks/commit-msg` (warns) | unreleased |
 
 The last four sensors exist because they are this repo's real failure modes: a
 malformed `pack.json` breaks installs silently, an agent missing frontmatter is
