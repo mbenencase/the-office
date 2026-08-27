@@ -1,3 +1,6 @@
 {"class":"stack-specific-probe","task":"phase-7/dogfood","lens":"architecture","severity":"normal","note":"audit tests probe only fired for the four known stacks; a shell test suite scored 0","seq":1}
 {"class":"harness-counted-as-work","task":"phase-7/dogfood","lens":"behaviour","severity":"normal","note":"office scope counted the installed .claude/ payload as task changes","seq":2}
 {"class":"assertion-inverted","task":"phase-7/dogfood","lens":"behaviour","severity":"normal","note":"scope regression test asserted an in-scope file appears in the failure list","seq":3}
+{"class":"sigpipe-in-pipeline","task":"ci/first-run","lens":"behaviour","severity":"normal","note":"grep -q closes the pipe; upstream process dies of SIGPIPE and pipefail reports 141","seq":4}
+{"class":"cwd-dependent-cli-call","task":"ci/first-run","lens":"behaviour","severity":"normal","note":"office resolves root by walking up; CI ran it from the workspace and hit this repo's own board","seq":5}
+{"class":"linter-parse-error-masks-findings","task":"ci/first-run","lens":"maintainability","severity":"normal","note":"SC1073 halted shellcheck; a third finding (SC2164) only appeared after the first two were fixed","seq":6}
