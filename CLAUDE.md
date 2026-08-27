@@ -24,9 +24,14 @@ node payload/bin/office.mjs help         # the CLI, run from this repo
 
 ## Conventions
 
-- **The CLI stays zero-dependency.** No `node_modules` in this repo. The
-  installer's whole value is that a target repo can run the CLI with nothing but
-  the Node that Claude Code already requires. A dependency here costs that.
+- **The CLI stays zero-dependency.** `payload/bin/office.mjs` imports nothing
+  outside Node's standard library, and nothing shipped by `install.sh` may
+  either. The installer's whole value is that a target repo runs the CLI with
+  nothing but the Node that Claude Code already requires.
+  Tooling under `scripts/` is exempt: `check-mermaid.mjs` needs mermaid and
+  jsdom, installed with `npm i --no-save` and gitignored. Nothing under
+  `scripts/` is installed into a target repo, so this costs users nothing —
+  but never let such a dependency drift into `payload/`.
 - **Anything deterministic goes in the CLI, not in a prompt.** If a model is
   reasoning about something a CPU could settle — board state, dependency order,
   whether a check passed — that logic is in the wrong place.

@@ -18,6 +18,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Release workflow: a `v*` tag verifies version consistency, runs the suite,
   and publishes a GitHub Release with that version's changelog section.
 - Version-consistency and changelog-section sensors in `tests/run.sh`.
+- Mermaid diagrams in the README: the routing pipeline with its three human
+  gates and the steering loop, and the task lifecycle state machine.
+- `scripts/check-mermaid.mjs` plus a `docs` CI job — a broken mermaid block
+  renders as a grey error box on GitHub and otherwise fails nothing, so it is
+  only ever found by a human looking at the rendered page.
 
 ### Fixed
 - Pack configs were never executed against their tools. The `packs` CI job now

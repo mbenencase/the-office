@@ -182,6 +182,15 @@ NOTES="$(awk -v v="$(cat "$ROOT/VERSION")" '
 if [ "$NOTES" -gt 0 ]; then ok "release notes extract for the current VERSION ($NOTES lines)"
 else bad "release notes extract for the current VERSION" "the awk in release.yml would publish an empty release"; fi
 echo
+echo "docs — diagrams parse"
+# A broken mermaid block renders as a grey error box on GitHub and fails nothing.
+if node "$ROOT/scripts/check-mermaid.mjs" "$ROOT/README.md" >/tmp/office-mermaid.log 2>&1; then
+  ok "$(tail -1 /tmp/office-mermaid.log)"
+else
+  bad "README mermaid diagrams parse" "$(grep -m1 FAIL /tmp/office-mermaid.log || tail -1 /tmp/office-mermaid.log)"
+fi
+rm -f /tmp/office-mermaid.log
+echo
 echo "versioning — one source of truth, three consumers"
 V="$(cat "$ROOT/VERSION")"
 CLI="$(grep -oP "const VERSION = '\K[^']+" "$ROOT/payload/bin/office.mjs")"

@@ -11,6 +11,90 @@ repository — greenfield or legacy — and then build software through it.
 The roles below are inferential controls. Their purpose is to produce
 *computational* ones.
 
+## How it works
+
+A request enters through the Judge and leaves as completed tasks whose
+definitions of done a machine has verified. Hexagons are the points where a
+human must approve; the dotted path is the steering loop, which turns a
+recurring defect into a control so it stops recurring.
+
+```mermaid
+flowchart TD
+    REQ([Request]) --> JUDGE{Judge}
+
+    JUDGE -->|harness| OM[Office Manager]
+    JUDGE -->|feature| PO[Product Owner]
+    JUDGE -->|trivial| MIN[Minimal task file]
+
+    OM --> G3{{"GATE 3<br/>approve the harness change"}}
+    G3 --> CTRL[("Controls installed<br/>harness.md updated")]
+
+    PO --> G1{{"GATE 1<br/>confirm understanding"}}
+    G1 --> PLAN[Planner]
+    PLAN --> DA["Devil's Advocate"]
+    DA -->|"rejected — max 3 passes"| PLAN
+    DA -->|approved| G2{{"GATE 2<br/>approve the board"}}
+
+    G2 --> NEXT
+    MIN --> NEXT[/"office next — dependency ordered"/]
+
+    NEXT --> SWE["SWE<br/>tier picks the model"]
+    SWE --> VER{{"office check + office scope"}}
+    VER -->|fails| SWE
+    VER -->|passes| REV[Reviewer]
+    REV -->|"findings — max 3 attempts"| SWE
+    REV -->|"out of attempts"| HUM([Escalate to a human])
+    REV -->|accepted| DONE[/"office done — records branch + commit"/]
+    DONE --> NEXT
+
+    REV -.->|log finding by class| LED[("findings.jsonl")]
+    LED -.->|class recurs| JAN[Janitor]
+    JAN -.->|propose a control| G3
+
+    classDef gate stroke-width:3px
+    class G1,G2,G3 gate
+```
+
+Two things in that picture do the real work.
+
+**The `office check + office scope` node is not a review step.** It is two shell
+commands. A task whose checks exit non-zero cannot reach the Reviewer, which
+means expensive inferential attention is never spent on something a CPU has
+already settled.
+
+**The dotted path is what makes the harness compound.** Without it the Reviewer
+catches a defect, the SWE fixes it, and the next feature reproduces it forever.
+The Janitor converts a recurring finding class into a type, a lint rule, or a
+fitness function — and that proposal goes through Gate 3 like any other harness
+change.
+
+### Task lifecycle
+
+Statuses move through the CLI, never by editing frontmatter. Only the Reviewer
+runs `office done`; a SWE that marks its own work complete has removed the
+review from the pipeline.
+
+```mermaid
+stateDiagram-v2
+    state "in-progress" as inprog
+
+    [*] --> pending : office task new
+    pending --> inprog : office claim
+    inprog --> review : office review
+    review --> completed : office done
+    review --> inprog : findings sent back
+    inprog --> blocked : office block
+    review --> blocked : office block
+    blocked --> inprog : office claim
+    completed --> [*]
+
+    note right of blocked
+        Needs a human.
+        Reached when attempts
+        exceeds max_attempts.
+    end note
+```
+
 ## Install
 
 ```bash

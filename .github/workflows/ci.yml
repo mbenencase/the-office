@@ -109,6 +109,19 @@ jobs:
             echo "install.sh should refuse its own repo" >&2; exit 1
           fi
 
+  docs:
+    name: diagrams
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      # mermaid needs a DOM, so this needs mermaid + jsdom. Neither is a
+      # dependency of this repo -- installed with --no-save into a gitignored
+      # node_modules that exists only for this job.
+      - run: npm i --no-save mermaid@11 jsdom
+      - run: node scripts/check-mermaid.mjs README.md
+
   packs:
     name: pack configs (${{ matrix.stack }})
     runs-on: ubuntu-latest
