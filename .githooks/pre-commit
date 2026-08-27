@@ -21,6 +21,17 @@ for f in packs/*/pack.json; do
     echo "pre-commit: $f is not valid JSON" >&2; fail=1; }
 done
 
+# Version drift is cheap to catch here and expensive to catch after a tag.
+V="$(cat VERSION)"
+if ! grep -q "^const VERSION = '$V';$" payload/bin/office.mjs; then
+  echo "pre-commit: VERSION ($V) does not match the constant in office.mjs -- run scripts/bump.sh" >&2
+  fail=1
+fi
+if ! node -e "process.exit(require('./package.json').version === '$V' ? 0 : 1)"; then
+  echo "pre-commit: VERSION ($V) does not match package.json -- run scripts/bump.sh" >&2
+  fail=1
+fi
+
 # The board's own sensor, when the board changed.
 if git diff --cached --name-only | grep -q '^\.the-office/'; then
   node payload/bin/office.mjs validate || fail=1

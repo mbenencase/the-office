@@ -148,9 +148,56 @@ for t in office-swe-fast office-swe office-swe-deep; do
 done
 ok "all three SWE tier variants exist"
 
-if [ "$(cat "$ROOT/VERSION")" = "$(grep -oP "const VERSION = '\K[^']+" "$ROOT/payload/bin/office.mjs")" ]; then
-  ok "VERSION file matches the CLI constant"
-else bad "VERSION file matches the CLI constant" "drift between VERSION and office.mjs"; fi
+echo
+echo "ci — workflow integrity"
+for f in "$ROOT"/.github/workflows/*.yml; do
+  if python3 -c "import yaml,sys; yaml.safe_load(open('$f'))" 2>/dev/null; then
+    ok "$(basename "$f") is valid YAML"
+  else bad "$(basename "$f") is valid YAML"; fi
+done
+
+# shellcheck is not always installed locally; bash -n catches syntax errors
+# either way, and CI runs the full shellcheck pass.
+for f in "$ROOT/install.sh" "$ROOT/tests/run.sh" "$ROOT/scripts/bump.sh" "$ROOT/.githooks/pre-commit"; do
+  if bash -n "$f" 2>/dev/null; then ok "$(basename "$f") parses"; else bad "$(basename "$f") parses"; fi
+done
+if command -v shellcheck >/dev/null 2>&1; then
+  if shellcheck -S warning "$ROOT/install.sh" "$ROOT/scripts/bump.sh" "$ROOT/.githooks/pre-commit" >/dev/null 2>&1; then
+    ok "shellcheck clean"
+  else bad "shellcheck clean" "run: shellcheck -S warning install.sh scripts/bump.sh .githooks/pre-commit"; fi
+else
+  ok "shellcheck skipped (not installed; CI runs it)"
+fi
+
+# The release workflow extracts notes by awk. If that yields nothing, the tag
+# publishes an empty release — which is only discovered after it is pushed.
+NOTES="$(awk -v v="$(cat "$ROOT/VERSION")" '
+  $0 ~ "^## \\["v"\\]" {f=1; next}
+  f && /^## / {exit}
+  f {print}
+' "$ROOT/CHANGELOG.md" | grep -c . || true)"
+if [ "$NOTES" -gt 0 ]; then ok "release notes extract for the current VERSION ($NOTES lines)"
+else bad "release notes extract for the current VERSION" "the awk in release.yml would publish an empty release"; fi
+echo
+echo "versioning — one source of truth, three consumers"
+V="$(cat "$ROOT/VERSION")"
+CLI="$(grep -oP "const VERSION = '\K[^']+" "$ROOT/payload/bin/office.mjs")"
+PKG="$(node -e "console.log(require('$ROOT/package.json').version)")"
+
+if [ "$V" = "$CLI" ]; then ok "VERSION matches the CLI constant"
+else bad "VERSION matches the CLI constant" "VERSION=$V office.mjs=$CLI — run scripts/bump.sh"; fi
+
+if [ "$V" = "$PKG" ]; then ok "VERSION matches package.json"
+else bad "VERSION matches package.json" "VERSION=$V package.json=$PKG — run scripts/bump.sh"; fi
+
+if echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then ok "VERSION is semver"
+else bad "VERSION is semver" "got '$V'"; fi
+
+if grep -qE "^## \[$V\]" "$ROOT/CHANGELOG.md"; then ok "CHANGELOG has a section for $V"
+else bad "CHANGELOG has a section for $V" "a release with no notes cannot produce release notes"; fi
+
+if grep -q '^## \[Unreleased\]' "$ROOT/CHANGELOG.md"; then ok "CHANGELOG has an Unreleased section"
+else bad "CHANGELOG has an Unreleased section" "bump.sh needs it to cut a release"; fi
 
 echo
 printf '\n%s passed, %s failed\n\n' "$PASS" "$FAIL"

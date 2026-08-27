@@ -98,9 +98,46 @@ hooks last.
 ## Development
 
 ```bash
-bash tests/run.sh                     # 38 assertions; must be green
+bash tests/run.sh                     # the sensor suite; must be green
 git config core.hooksPath .githooks   # install the pre-commit sensor
 ```
 
 The CLI stays zero-dependency. That is what lets a target repo run it with
 nothing but the Node that Claude Code already requires.
+
+## Releasing
+
+`VERSION` is the single source of truth. It is propagated to `package.json` and
+the `VERSION` constant in `payload/bin/office.mjs`; `tests/run.sh` and the
+pre-commit hook both fail if they drift apart, so `scripts/bump.sh` is the only
+supported way to change it.
+
+```bash
+# 1. write the notes under ## [Unreleased] in CHANGELOG.md
+# 2. cut the release
+scripts/bump.sh patch          # or minor | major | X.Y.Z
+scripts/bump.sh patch --dry-run   # see what it would do first
+
+# 3. publish
+git push && git push origin v$(cat VERSION)
+```
+
+`bump.sh` refuses a dirty tree, refuses an empty Unreleased section, runs the
+sensor suite before tagging, and dates the release section as it moves it.
+
+The `release` workflow fires on the `v*` tag: it verifies the tag matches
+`VERSION`, runs the suite, smoke-tests an install from the tagged tree, extracts
+that version's changelog section as the release notes, and publishes a tarball
+of the installable payload.
+
+## CI
+
+| Job | What it covers |
+|---|---|
+| `sensors` | the suite on Node 18, 20, 22 |
+| `shellcheck` | `install.sh`, `tests/run.sh`, `bump.sh`, the pre-commit hook |
+| `install` | clean install, upgrade preserving board state, uninstall keeping `.the-office/` |
+| `packs` | each pack's config run against the real tool — ruff, eslint, gofmt/vet, rustfmt, clippy |
+
+The `packs` job matters most: those configs ship into other people's
+repositories, and before it existed nothing had ever executed them.

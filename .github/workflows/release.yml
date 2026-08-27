@@ -1,0 +1,69 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # needed to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: the tag must match VERSION
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          FILE="$(cat VERSION)"
+          if [ "$TAG" != "$FILE" ]; then
+            echo "tag v$TAG does not match VERSION ($FILE)." >&2
+            echo "Use scripts/bump.sh — it writes both and tags in one step." >&2
+            exit 1
+          fi
+          echo "VERSION=$FILE" >> "$GITHUB_ENV"
+
+      - name: sensor suite
+        run: bash tests/run.sh
+
+      - name: install smoke test from the tagged tree
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"; git -C "$T" init -q
+          ./install.sh "$T"
+          "$T/.claude/office/bin/office" --version | grep -qx "$VERSION"
+
+      - name: extract this version's changelog section
+        run: |
+          set -euo pipefail
+          # Everything between "## [X.Y.Z]" and the next "## " heading.
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\["v"\\]" {f=1; next}
+            f && /^## / {exit}
+            f {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "CHANGELOG.md has no section for $VERSION." >&2
+            exit 1
+          fi
+          cat RELEASE_NOTES.md
+
+      - name: package the installable payload
+        run: |
+          set -euo pipefail
+          tar -czf "the-office-$VERSION.tar.gz" \
+            VERSION install.sh payload packs templates \
+            README.md CHANGELOG.md PLAN.md
+
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ env.VERSION }}
+          body_path: RELEASE_NOTES.md
+          files: the-office-${{ env.VERSION }}.tar.gz
+          fail_on_unmatched_files: true
