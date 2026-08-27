@@ -2,71 +2,92 @@ name: release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    # Only the shipped surface triggers a release. A README or CI-only change
+    # does not deserve a version number, and version churn makes the series
+    # meaningless. Anything install.sh copies into a target repo belongs here.
+    paths:
+      - 'payload/**'
+      - 'packs/**'
+      - 'templates/**'
+      - 'install.sh'
+      - 'VERSION'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Override the derived bump level'
+        required: false
+        default: auto
+        type: choice
+        options: [auto, patch, minor, major]
+
+# Never two releases at once: they would race on the tag and on main.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
-  contents: write   # needed to create the release
+  contents: write
 
 jobs:
+  # Reuses the full CI suite rather than a subset, so what gets published is
+  # exactly what CI is green on.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0      # release.mjs reads tags and full history
+          fetch-tags: true
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
 
-      - name: the tag must match VERSION
+      - name: identify as the release bot
         run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
-          FILE="$(cat VERSION)"
-          if [ "$TAG" != "$FILE" ]; then
-            echo "tag v$TAG does not match VERSION ($FILE)." >&2
-            echo "Use scripts/bump.sh — it writes both and tags in one step." >&2
-            exit 1
-          fi
-          echo "VERSION=$FILE" >> "$GITHUB_ENV"
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-      - name: sensor suite
-        run: bash tests/run.sh
-
-      - name: install smoke test from the tagged tree
+      - name: compute and apply the release
+        id: rel
         run: |
-          set -euo pipefail
-          T="$(mktemp -d)"; git -C "$T" init -q
-          ./install.sh "$T"
-          got="$("$T/.claude/office/bin/office" --version)"
-          if [ "$got" != "$VERSION" ]; then
-            echo "installed CLI reports $got, expected $VERSION" >&2; exit 1
-          fi
+          node scripts/release.mjs \
+            --write --commit --tag \
+            --bump "${{ inputs.bump || 'auto' }}"
 
-      - name: extract this version's changelog section
+      - name: push the release commit and tag
+        if: steps.rel.outputs.released == 'true'
+        # A push authenticated with GITHUB_TOKEN does not trigger workflows, so
+        # this cannot re-enter the release workflow. The [skip ci] marker in the
+        # commit subject is a second guard in case that ever changes.
         run: |
-          set -euo pipefail
-          # Everything between "## [X.Y.Z]" and the next "## " heading.
-          awk -v v="$VERSION" '
-            $0 ~ "^## \\["v"\\]" {f=1; next}
-            f && /^## / {exit}
-            f {print}
-          ' CHANGELOG.md > RELEASE_NOTES.md
-          if [ ! -s RELEASE_NOTES.md ]; then
-            echo "CHANGELOG.md has no section for $VERSION." >&2
-            exit 1
-          fi
-          cat RELEASE_NOTES.md
+          git push origin HEAD:main
+          git push origin "v${{ steps.rel.outputs.version }}"
 
       - name: package the installable payload
+        if: steps.rel.outputs.released == 'true'
         run: |
-          set -euo pipefail
-          tar -czf "the-office-$VERSION.tar.gz" \
+          tar -czf "the-office-${{ steps.rel.outputs.version }}.tar.gz" \
             VERSION install.sh payload packs templates \
             README.md CHANGELOG.md PLAN.md
 
       - name: publish
+        if: steps.rel.outputs.released == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: v${{ env.VERSION }}
+          tag_name: v${{ steps.rel.outputs.version }}
+          name: v${{ steps.rel.outputs.version }}
           body_path: RELEASE_NOTES.md
-          files: the-office-${{ env.VERSION }}.tar.gz
+          files: the-office-${{ steps.rel.outputs.version }}.tar.gz
           fail_on_unmatched_files: true
+
+      - name: summary
+        run: |
+          if [ "${{ steps.rel.outputs.released }}" = "true" ]; then
+            echo "Published **v${{ steps.rel.outputs.version }}** (${{ steps.rel.outputs.level }})" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No releasable commits — nothing published." >> "$GITHUB_STEP_SUMMARY"
+          fi

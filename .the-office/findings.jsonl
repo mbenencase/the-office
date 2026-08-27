@@ -4,3 +4,4 @@
 {"class":"sigpipe-in-pipeline","task":"ci/first-run","lens":"behaviour","severity":"normal","note":"grep -q closes the pipe; upstream process dies of SIGPIPE and pipefail reports 141","seq":4}
 {"class":"cwd-dependent-cli-call","task":"ci/first-run","lens":"behaviour","severity":"normal","note":"office resolves root by walking up; CI ran it from the workspace and hit this repo's own board","seq":5}
 {"class":"linter-parse-error-masks-findings","task":"ci/first-run","lens":"maintainability","severity":"normal","note":"SC1073 halted shellcheck; a third finding (SC2164) only appeared after the first two were fixed","seq":6}
+{"class":"unverified-rendered-content","task":"docs/diagrams","lens":"maintainability","severity":"normal","note":"mermaid blocks fail nothing at build time; only a human viewing the rendered page would notice","seq":7}

@@ -11,6 +11,90 @@ repository — greenfield or legacy — and then build software through it.
 The roles below are inferential controls. Their purpose is to produce
 *computational* ones.
 
+## How it works
+
+A request enters through the Judge and leaves as completed tasks whose
+definitions of done a machine has verified. Hexagons are the points where a
+human must approve; the dotted path is the steering loop, which turns a
+recurring defect into a control so it stops recurring.
+
+```mermaid
+flowchart TD
+    REQ([Request]) --> JUDGE{Judge}
+
+    JUDGE -->|harness| OM[Office Manager]
+    JUDGE -->|feature| PO[Product Owner]
+    JUDGE -->|trivial| MIN[Minimal task file]
+
+    OM --> G3{{"GATE 3<br/>approve the harness change"}}
+    G3 --> CTRL[("Controls installed<br/>harness.md updated")]
+
+    PO --> G1{{"GATE 1<br/>confirm understanding"}}
+    G1 --> PLAN[Planner]
+    PLAN --> DA["Devil's Advocate"]
+    DA -->|"rejected — max 3 passes"| PLAN
+    DA -->|approved| G2{{"GATE 2<br/>approve the board"}}
+
+    G2 --> NEXT
+    MIN --> NEXT[/"office next — dependency ordered"/]
+
+    NEXT --> SWE["SWE<br/>tier picks the model"]
+    SWE --> VER{{"office check + office scope"}}
+    VER -->|fails| SWE
+    VER -->|passes| REV[Reviewer]
+    REV -->|"findings — max 3 attempts"| SWE
+    REV -->|"out of attempts"| HUM([Escalate to a human])
+    REV -->|accepted| DONE[/"office done — records branch + commit"/]
+    DONE --> NEXT
+
+    REV -.->|log finding by class| LED[("findings.jsonl")]
+    LED -.->|class recurs| JAN[Janitor]
+    JAN -.->|propose a control| G3
+
+    classDef gate stroke-width:3px
+    class G1,G2,G3 gate
+```
+
+Two things in that picture do the real work.
+
+**The `office check + office scope` node is not a review step.** It is two shell
+commands. A task whose checks exit non-zero cannot reach the Reviewer, which
+means expensive inferential attention is never spent on something a CPU has
+already settled.
+
+**The dotted path is what makes the harness compound.** Without it the Reviewer
+catches a defect, the SWE fixes it, and the next feature reproduces it forever.
+The Janitor converts a recurring finding class into a type, a lint rule, or a
+fitness function — and that proposal goes through Gate 3 like any other harness
+change.
+
+### Task lifecycle
+
+Statuses move through the CLI, never by editing frontmatter. Only the Reviewer
+runs `office done`; a SWE that marks its own work complete has removed the
+review from the pipeline.
+
+```mermaid
+stateDiagram-v2
+    state "in-progress" as inprog
+
+    [*] --> pending : office task new
+    pending --> inprog : office claim
+    inprog --> review : office review
+    review --> completed : office done
+    review --> inprog : findings sent back
+    inprog --> blocked : office block
+    review --> blocked : office block
+    blocked --> inprog : office claim
+    completed --> [*]
+
+    note right of blocked
+        Needs a human.
+        Reached when attempts
+        exceeds max_attempts.
+    end note
+```
+
 ## Install
 
 ```bash
@@ -107,37 +191,61 @@ nothing but the Node that Claude Code already requires.
 
 ## Releasing
 
-`VERSION` is the single source of truth. It is propagated to `package.json` and
-the `VERSION` constant in `payload/bin/office.mjs`; `tests/run.sh` and the
-pre-commit hook both fail if they drift apart, so `scripts/bump.sh` is the only
-supported way to change it.
+**Releases are automatic.** Every merge to `main` that touches the shipped
+surface — `payload/`, `packs/`, `templates/`, `install.sh`, `VERSION` — runs the
+full CI suite and, if it passes, publishes a release. A README, docs, or CI-only
+change publishes nothing; version churn for a typo fix makes the series
+meaningless.
+
+The version comes from [Conventional Commits](https://www.conventionalcommits.org/)
+since the last tag:
+
+| Commit | Bump | Notes section |
+|---|---|---|
+| `feat: …` | minor | Added |
+| `fix: …` | patch | Fixed |
+| `perf:` `refactor:` `revert:` | patch | Changed |
+| `docs:` `test:` `ci:` `chore:` `build:` `style:` | patch | Internal |
+| `feat!: …` or `BREAKING CHANGE:` in the body | **major** | Breaking |
+| anything without a type prefix | patch | Changed |
+
+So the commit message *is* the release note. `.githooks/commit-msg` warns when a
+subject is not conventional — advisory, not blocking, because a hook that blocks
+over a message is a hook people turn off.
+
+`scripts/release.mjs` is the single implementation of "what version comes next
+and what does it contain". CI calls it; so can you:
 
 ```bash
-# 1. write the notes under ## [Unreleased] in CHANGELOG.md
-# 2. cut the release
-scripts/bump.sh patch          # or minor | major | X.Y.Z
-scripts/bump.sh patch --dry-run   # see what it would do first
-
-# 3. publish
-git push && git push origin v$(cat VERSION)
+node scripts/release.mjs                     # plan only, changes nothing
+node scripts/release.mjs --bump minor        # what a forced minor would do
+node scripts/release.mjs --write --commit --tag   # cut one by hand
 ```
 
-`bump.sh` refuses a dirty tree, refuses an empty Unreleased section, runs the
-sensor suite before tagging, and dates the release section as it moves it.
+There is no hand-maintained `Unreleased` section in `CHANGELOG.md`. Under
+auto-release `main` is always released, so it would always be empty; each
+generated section is inserted beneath the `<!-- next-release -->` marker.
 
-The `release` workflow fires on the `v*` tag: it verifies the tag matches
-`VERSION`, runs the suite, smoke-tests an install from the tagged tree, extracts
-that version's changelog section as the release notes, and publishes a tarball
-of the installable payload.
+**Forcing a level.** Run the `release` workflow via *workflow_dispatch* and pick
+`patch`, `minor`, or `major` to override what the commits imply.
+
+**Loop safety.** The release commit touches `VERSION`, which is in the trigger's
+path filter. It does not re-trigger, because a push authenticated with
+`GITHUB_TOKEN` never starts a workflow; the `[skip ci]` marker in the commit
+subject is a second guard.
 
 ## CI
 
 | Job | What it covers |
 |---|---|
 | `sensors` | the suite on Node 18, 20, 22 |
-| `shellcheck` | `install.sh`, `tests/run.sh`, `bump.sh`, the pre-commit hook |
+| `shellcheck` | `install.sh`, `tests/run.sh`, both git hooks |
 | `install` | clean install, upgrade preserving board state, uninstall keeping `.the-office/` |
+| `docs` | every ```mermaid block in the README actually parses |
 | `packs` | each pack's config run against the real tool — ruff, eslint, gofmt/vet, rustfmt, clippy |
+
+`release` reuses this whole workflow via `workflow_call` rather than a subset,
+so what gets published is exactly what CI is green on.
 
 The `packs` job matters most: those configs ship into other people's
 repositories, and before it existed nothing had ever executed them.

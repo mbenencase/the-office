@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The release workflow gates on this, so a release never publishes from a
+  # tree the suite has not passed.
+  workflow_call:
 
 # A newer push to the same ref makes the older run's answer irrelevant.
 concurrency:
@@ -45,8 +48,8 @@ jobs:
           shellcheck -S warning \
             install.sh \
             tests/run.sh \
-            scripts/bump.sh \
-            .githooks/pre-commit
+            .githooks/pre-commit \
+            .githooks/commit-msg
 
   install:
     name: install / upgrade / uninstall
@@ -108,6 +111,19 @@ jobs:
           if ./install.sh . 2>/dev/null; then
             echo "install.sh should refuse its own repo" >&2; exit 1
           fi
+
+  docs:
+    name: diagrams
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      # mermaid needs a DOM, so this needs mermaid + jsdom. Neither is a
+      # dependency of this repo -- installed with --no-save into a gitignored
+      # node_modules that exists only for this job.
+      - run: npm i --no-save mermaid@11 jsdom
+      - run: node scripts/check-mermaid.mjs README.md
 
   packs:
     name: pack configs (${{ matrix.stack }})
