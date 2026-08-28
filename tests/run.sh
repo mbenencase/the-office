@@ -86,6 +86,12 @@ else ok "does not flag in-scope files"; fi
 if printf '%s\n' "$scope_out" | grep -q '\.claude/'; then
   bad "ignores the installed harness payload" ".claude/ was counted as task work"
 else ok "ignores the installed harness payload"; fi
+mkdir -p "$WORK/.cursor/agents"
+echo "payload" > "$WORK/.cursor/agents/office-swe.md"
+scope_out="$( (cd "$WORK" && $OFFICE scope sample/task-01) 2>&1 || true)"
+if printf '%s\n' "$scope_out" | grep -q '\.cursor/'; then
+  bad "ignores the cursor harness payload" ".cursor/ was counted as task work"
+else ok "ignores the cursor harness payload"; fi
 rm -rf "$WORK"
 
 echo
@@ -150,6 +156,35 @@ for t in office-swe-fast office-swe office-swe-deep; do
   [ -f "$ROOT/payload/agents/$t.md" ] || bad "tier variant $t exists"
 done
 ok "all three SWE tier variants exist"
+
+echo
+echo "install — cursor runtime"
+WORK=$(mktemp -d)
+git -C "$WORK" init -q
+echo '{"name":"demo","type":"module"}' > "$WORK/package.json"
+git -C "$WORK" -c user.email=test@x -c user.name=test add -A
+git -C "$WORK" -c user.email=test@x -c user.name=test commit -qm init
+if "$ROOT/install.sh" "$WORK" --runtime cursor >/dev/null 2>&1; then ok "installs into .cursor/"
+else bad "installs into .cursor/"; fi
+if [ -f "$WORK/.cursor/agents/office-judge.md" ]; then ok "installs cursor subagents"
+else bad "installs cursor subagents"; fi
+if [ -x "$WORK/.cursor/office/bin/office" ]; then ok "installs the CLI under .cursor/office"
+else bad "installs the CLI under .cursor/office"; fi
+if grep -q '^readonly: true$' "$WORK/.cursor/agents/office-judge.md"; then ok "marks audit-only agents readonly"
+else bad "marks audit-only agents readonly"; fi
+if ! grep -q '^tools:' "$WORK/.cursor/agents/office-judge.md"; then ok "strips Claude-only tools frontmatter"
+else bad "strips Claude-only tools frontmatter"; fi
+if grep -q '.cursor/office/bin/office.mjs' "$WORK/.cursor/skills/office/SKILL.md"; then ok "rewrites CLI paths for cursor"
+else bad "rewrites CLI paths for cursor"; fi
+if [ -f "$WORK/.cursor/skills/office-board/SKILL.md" ] && \
+   grep -q 'disable-model-invocation: true' "$WORK/.cursor/skills/office-board/SKILL.md"; then
+  ok "converts commands into slash-invoked skills"
+else bad "converts commands into slash-invoked skills"; fi
+"$ROOT/install.sh" "$WORK" --runtime cursor --uninstall >/dev/null 2>&1
+if [ ! -d "$WORK/.cursor/office" ] && [ ! -f "$WORK/.cursor/agents/office-judge.md" ]; then
+  ok "cursor uninstall removes the payload"
+else bad "cursor uninstall removes the payload"; fi
+rm -rf "$WORK"
 
 echo
 echo "ci — workflow integrity"

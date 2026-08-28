@@ -106,6 +106,24 @@ jobs:
           # Board state, harness manifest, and findings belong to the repo.
           test -f "$T/.the-office/features/demo/task-01.md"
 
+      - name: cursor runtime installs subagents and slash skills
+        run: |
+          set -euo pipefail
+          C="$(mktemp -d)"
+          git -C "$C" init -q
+          echo '{"name":"demo","type":"module"}' > "$C/package.json"
+          git -C "$C" -c user.email=ci@x -c user.name=ci add -A
+          git -C "$C" -c user.email=ci@x -c user.name=ci commit -qm init
+          ./install.sh "$C" --runtime cursor
+          test -f "$C/.cursor/agents/office-judge.md"
+          test -f "$C/.cursor/skills/office-board/SKILL.md"
+          test -x "$C/.cursor/office/bin/office"
+          grep -q 'readonly: true' "$C/.cursor/agents/office-judge.md"
+          grep -q '.cursor/office/bin/office.mjs' "$C/.cursor/skills/office/SKILL.md"
+          ./install.sh "$C" --runtime both --force
+          test -f "$C/.claude/agents/office-judge.md"
+          test -f "$C/.cursor/agents/office-judge.md"
+
       - name: refuses to install into its own repo
         run: |
           if ./install.sh . 2>/dev/null; then
