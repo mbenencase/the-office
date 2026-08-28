@@ -62,7 +62,8 @@ esac
   die "refusing to install the-office into its own repo — pass a target, or use --link from the target."
 
 uninstall_runtime() { # uninstall_runtime <dir>
-  local root="$1" removed=0 office="$root/office"
+  local root="$1" removed=0
+  local office="$root/office"
   for d in agents skills commands; do
     [ -d "$root/$d" ] || continue
     for f in "$root/$d"/office*; do
