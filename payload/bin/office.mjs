@@ -529,9 +529,9 @@ cmds.scope = (argv) => {
   if (!globs.length) { console.log(c.yellow(`task ${t.data.id} declares no scope — nothing to enforce.`)); return; }
 
   // The harness itself is never part of a task's scope: .the-office/ is board
-  // state the CLI writes, and .claude/ is the installed payload. Counting either
-  // makes every task in a repo with the-office installed fail its scope check.
-  const HARNESS = ['.the-office/', '.claude/'];
+  // state the CLI writes, and .claude/ / .cursor/ are installed payloads.
+  // Counting either makes every task in a repo with the-office installed fail.
+  const HARNESS = ['.the-office/', '.claude/', '.cursor/'];
   const files = changedFiles(root).filter((f) => !HARNESS.some((h) => f.startsWith(h)));
   const outside = files.filter((f) => !matchesAny(f, globs));
   if (!outside.length) {

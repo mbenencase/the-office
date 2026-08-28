@@ -102,6 +102,14 @@ git clone <this repo> ~/src/the-office
 ~/src/the-office/install.sh /path/to/your/repo
 ```
 
+For **Cursor Agent** (subagents in `.cursor/agents/`, skills in `.cursor/skills/`):
+
+```bash
+~/src/the-office/install.sh /path/to/your/repo --runtime cursor
+```
+
+Use `--runtime both` to install into `.claude/` and `.cursor/` at once.
+
 Then, in that repo:
 
 ```
@@ -112,6 +120,8 @@ Then, in that repo:
 ```
 
 `--link` symlinks instead of copying, for iterating on the-office itself.
+`--runtime cursor` installs a Cursor Agent payload (`.cursor/agents/`,
+`.cursor/skills/`); `--runtime both` installs Claude Code and Cursor layouts.
 `--uninstall` removes the payload and leaves your board state alone.
 
 ## The roster
