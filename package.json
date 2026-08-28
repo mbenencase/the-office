@@ -1,6 +1,6 @@
 {
   "name": "the-office",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI-assisted development workflow built on harness engineering",
   "private": true,
   "type": "module",

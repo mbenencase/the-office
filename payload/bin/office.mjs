@@ -14,7 +14,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 const STATUSES = ['pending', 'in-progress', 'review', 'blocked', 'completed'];
 const TIERS = ['fast', 'standard', 'deep'];

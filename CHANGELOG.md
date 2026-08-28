@@ -14,6 +14,20 @@ instead; they become these notes verbatim.
 
 <!-- next-release -->
 
+## [0.2.0] — 2026-08-28
+
+### Added
+
+- **install:** add Cursor Agent runtime support (#4) (`f1d885c`)
+- **ci:** auto-publish a release on every merge to main (`0517b90`)
+
+### Changed
+
+- Add workflow diagrams to the README, with a sensor for them (`8203685`)
+- Fix the four failures from the first CI run (`2f85a3a`)
+- Add CI, release automation, and single-source versioning (`b903fc6`)
+- Initial release: the-office v0.1.0 (`482f53e`)
+
 ## [0.1.0] — 2026-08-26
 
 First release. Phases 1–7 of [`PLAN.md`](./PLAN.md).
@@ -55,3 +69,4 @@ counted the installed `.claude/` payload as task work — which would have faile
 every task in every repo with this installed. Both fixed with regression tests.
 
 [0.1.0]: https://github.com/mbenencase/the-office/releases/tag/v0.1.0
+[0.2.0]: https://github.com/mbenencase/the-office/releases/tag/v0.2.0
