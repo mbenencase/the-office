@@ -20,11 +20,14 @@ npm install
 npm run tauri dev
 ```
 
-Frontend-only (no native dialogs / file IO):
+Frontend-only (browser — Chrome or Edge recommended):
 
 ```bash
 npm run dev
 ```
+
+Uses the File System Access API to open a folder, read `.the-office/features/`,
+and write task changes back. Drag-and-drop and editing work without Tauri.
 
 ## Build
 

@@ -1,3 +1,10 @@
+import {
+  loadBrowserBoard,
+  openBrowserWorkspace,
+  saveBrowserTaskRaw,
+  transitionBrowserTask,
+  updateBrowserTaskContent,
+} from "./browser/boardFs";
 import type { BoardState, Task } from "./types";
 
 function isTauri(): boolean {
@@ -5,32 +12,42 @@ function isTauri(): boolean {
 }
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) {
-    throw new Error(
-      `"${cmd}" requires the Tauri runtime. Run \`npm run tauri dev\` instead of \`npm run dev\` to use the native backend.`,
-    );
-  }
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
   return tauriInvoke<T>(cmd, args);
 }
 
-export async function pickFolder(): Promise<string | null> {
-  if (!isTauri()) {
-    const path = window.prompt(
-      "Enter the absolute path to a repo with .the-office/\n\n" +
-        "(Native folder picker is only available via `npm run tauri dev`)",
-    );
-    return path || null;
+/** Pick a folder and load the board. Works in Tauri and in the browser. */
+export async function openWorkspace(): Promise<BoardState | null> {
+  if (isTauri()) {
+    const path = await invoke<string | null>("pick_folder");
+    if (!path) return null;
+    return invoke<BoardState>("open_board", { path });
   }
-  return invoke<string | null>("pick_folder");
+  return openBrowserWorkspace();
+}
+
+export async function pickFolder(): Promise<string | null> {
+  if (isTauri()) {
+    return invoke<string | null>("pick_folder");
+  }
+  const board = await openBrowserWorkspace();
+  return board.root;
 }
 
 export async function openBoard(path: string): Promise<BoardState> {
-  return invoke<BoardState>("open_board", { path });
+  if (isTauri()) {
+    return invoke<BoardState>("open_board", { path });
+  }
+  void path;
+  return loadBrowserBoard();
 }
 
 export async function reloadBoard(root: string): Promise<BoardState> {
-  return invoke<BoardState>("reload_board", { root });
+  if (isTauri()) {
+    return invoke<BoardState>("reload_board", { root });
+  }
+  void root;
+  return loadBrowserBoard();
 }
 
 export async function transitionTask(
@@ -39,9 +56,12 @@ export async function transitionTask(
   action: "claim" | "review" | "done" | "block",
   reason?: string,
 ): Promise<BoardState> {
-  return invoke<BoardState>("transition_task", {
-    input: { root, id, action, reason: reason ?? null },
-  });
+  if (isTauri()) {
+    return invoke<BoardState>("transition_task", {
+      input: { root, id, action, reason: reason ?? null },
+    });
+  }
+  return transitionBrowserTask(root, id, action, reason);
 }
 
 export async function updateTaskContent(input: {
@@ -51,12 +71,15 @@ export async function updateTaskContent(input: {
   body: string;
   tier?: string | null;
 }): Promise<BoardState> {
-  return invoke<BoardState>("update_task_content", { input });
+  if (isTauri()) {
+    return invoke<BoardState>("update_task_content", { input });
+  }
+  return updateBrowserTaskContent(input);
 }
 
-export async function saveTaskRaw(
-  path: string,
-  raw: string,
-): Promise<Task> {
-  return invoke<Task>("save_task", { input: { path, raw } });
+export async function saveTaskRaw(path: string, raw: string): Promise<Task> {
+  if (isTauri()) {
+    return invoke<Task>("save_task", { input: { path, raw } });
+  }
+  return saveBrowserTaskRaw(path, raw);
 }

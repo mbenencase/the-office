@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { BoardState } from "./types";
-import { openBoard, pickFolder, reloadBoard } from "./api";
+import { openWorkspace, reloadBoard } from "./api";
 import { Board } from "./components/Board";
 import "./App.css";
 
@@ -15,33 +15,21 @@ function App() {
     return [...new Set(board.tasks.map((t) => t.feature))].sort();
   }, [board]);
 
-  async function openPath(path: string) {
+  async function onOpen() {
     setBusy(true);
     setError(null);
     try {
-      const next = await openBoard(path);
+      const next = await openWorkspace();
+      if (!next) {
+        setBusy(false);
+        return;
+      }
       setBoard(next);
       setFeature("all");
     } catch (e) {
       setError(String(e));
       setBoard(null);
     } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onOpen() {
-    setBusy(true);
-    setError(null);
-    try {
-      const path = await pickFolder();
-      if (!path) {
-        setBusy(false);
-        return;
-      }
-      await openPath(path);
-    } catch (e) {
-      setError(String(e));
       setBusy(false);
     }
   }
@@ -101,6 +89,11 @@ function App() {
             Pick a folder that contains <code>.the-office/</code>. Tasks are
             markdown files under <code>.the-office/features/</code> — drag them
             across columns to claim, review, complete, or block.
+          </p>
+          <p className="welcome__hint">
+            In the browser, use Chrome or Edge so the folder picker can read and
+            write task files. For the native dialog, run{" "}
+            <code>npm run tauri dev</code>.
           </p>
           <button type="button" className="primary" onClick={onOpen} disabled={busy}>
             Open folder

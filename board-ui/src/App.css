@@ -194,6 +194,10 @@ code {
   margin: 0 0 0.5rem;
 }
 
+.welcome__hint {
+  font-size: 0.9rem;
+}
+
 .board-layout {
   flex: 1;
   display: grid;
