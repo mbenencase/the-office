@@ -1,0 +1,136 @@
+name: board-ui release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'board-ui/**'
+  pull_request:
+    paths:
+      - 'board-ui/**'
+  workflow_dispatch:
+
+concurrency:
+  group: board-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.platform.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
+          - name: Windows arm64
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+            args: --target aarch64-pc-windows-msvc
+          - name: Linux x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu
+          - name: macOS universal
+            os: macos-latest
+            target: universal-apple-darwin
+            args: --target universal-apple-darwin
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: board-ui/package-lock.json
+
+      - name: install Rust stable
+        uses: dtolnay/rust-action/setup@v1
+
+      - name: add Rust target
+        if: matrix.platform.target != 'universal-apple-darwin'
+        run: rustup target add ${{ matrix.platform.target }}
+
+      - name: add macOS universal targets
+        if: matrix.platform.target == 'universal-apple-darwin'
+        run: |
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+
+      - name: install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: install frontend deps
+        working-directory: board-ui
+        run: npm ci
+
+      - name: build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: board-ui
+          tauriScript: npx tauri
+          args: ${{ matrix.platform.args }}
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: board-ui-${{ matrix.platform.target }}
+          path: |
+            board-ui/src-tauri/target/**/release/bundle/**/*.msi
+            board-ui/src-tauri/target/**/release/bundle/**/*.exe
+            board-ui/src-tauri/target/**/release/bundle/**/*.nsis*
+            board-ui/src-tauri/target/**/release/bundle/**/*.deb
+            board-ui/src-tauri/target/**/release/bundle/**/*.AppImage
+            board-ui/src-tauri/target/**/release/bundle/**/*.dmg
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: read version
+        id: ver
+        working-directory: board-ui
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: board-ui/v${{ steps.ver.outputs.version }}
+          name: "Board UI v${{ steps.ver.outputs.version }}"
+          body: |
+            Tauri desktop kanban for the-office task workflows.
+
+            Download the installer for your platform:
+            - **Windows x64** — `.msi` or `.exe` (NSIS)
+            - **Windows arm64** — `.msi` or `.exe` (NSIS)
+            - **Linux x64** — `.deb` or `.AppImage`
+            - **macOS universal** — `.dmg`
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
+          draft: false
