@@ -52,7 +52,7 @@ jobs:
           cache-dependency-path: board-ui/package-lock.json
 
       - name: install Rust stable
-        uses: dtolnay/rust-action/setup@v1
+        uses: dtolnay/rust-toolchain@stable
 
       - name: add Rust target
         if: matrix.platform.target != 'universal-apple-darwin'
