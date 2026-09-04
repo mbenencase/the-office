@@ -1,2 +1,5 @@
 node_modules/
 RELEASE_NOTES.md
+board-ui/dist/
+board-ui/src-tauri/target/
+board-ui/node_modules/

@@ -244,6 +244,20 @@ path filter. It does not re-trigger, because a push authenticated with
 `GITHUB_TOKEN` never starts a workflow; the `[skip ci]` marker in the commit
 subject is a second guard.
 
+## Desktop board UI
+
+`board-ui/` is a Tauri app for viewing and editing the markdown kanban:
+
+```bash
+cd board-ui
+npm install
+npm run tauri dev
+```
+
+Open any repository folder that contains `.the-office/`. Drag tasks between
+columns to claim / review / complete / block (same transition rules as the CLI),
+and edit task markdown in the side panel.
+
 ## CI
 
 | Job | What it covers |

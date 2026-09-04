@@ -18,6 +18,7 @@ repository, then build software through it.
 bash tests/run.sh                        # the sensor suite; must be green
 node payload/bin/office.mjs help         # the CLI, run from this repo
 ./install.sh /path/to/target --link      # symlink install, for iterating
+cd board-ui && npm run tauri dev         # desktop kanban for .the-office/
 ```
 
 `git config core.hooksPath .githooks` installs the pre-commit hook.
