@@ -26,11 +26,11 @@ if (!runtime || !kind || !src) {
   process.exit(2);
 }
 
+// Reviewer runs checks and writes evidence, findings, and lifecycle state.
 const READONLY_AGENTS = new Set([
   'office-judge',
   'office-devils-advocate',
   'office-product-owner',
-  'office-reviewer',
 ]);
 
 const raw = fs.readFileSync(src, 'utf8');

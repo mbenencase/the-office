@@ -26,6 +26,7 @@ dod: |
   Six failed logins from one IP within 60s returns 429.
 attempts: 0
 max_attempts: 3
+base_commit: null
 branch: null
 commit: null
 ---
@@ -49,6 +50,7 @@ commit: null
 | `sensors_added` | Controls this task contributed to the harness. |
 | `dod` | Prose for the human and Reviewer. Commentary, not the contract. |
 | `attempts` / `max_attempts` | Bounds the SWE↔Reviewer loop. On exceeding, escalate. |
+| `base_commit` | Recorded on first claim; preserved across retries. Scope covers this commit through the working tree. |
 | `branch` / `commit` | Written by `office done` from git. Do not fill by hand. |
 
 There is deliberately no `model:` field. Model ids rot on every release; `tier`
@@ -84,3 +86,14 @@ $OFFICE validate
 empty `checks`, duplicate ids, orphan dependencies, and cycles. It does not and
 cannot catch a check that tests the wrong thing — that is the Devil's Advocate's
 job, and yours.
+
+## Verification and retries
+
+`review` requires passing check and scope evidence for the current commit and
+contract, with no uncommitted source. `done` only accepts `review` with that same
+evidence. Commit implementation before the final verification. Evidence is kept
+under Git's `office-verification/` directory; never fill it manually.
+
+Use `office retry <id> --reason "..."` to return review findings to implementation.
+It increments attempts and blocks at the budget limit. A retry resumes the task;
+do not claim it again. Empty scope is rejected by `office scope`.

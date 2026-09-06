@@ -68,13 +68,18 @@ nobody agreed to.
 
 ## Execution
 
-Sequential. One task in flight at a time, in `depends_on` order:
+Sequential. The CLI enforces one task in flight, completed dependencies, and
+the task attempt budget. Commit implementation before final check + scope;
+review and done reject uncommitted source or stale evidence.
+One task in flight at a time, in `depends_on` order:
 
 ```bash
 $OFFICE next          # the next ready task, or exit 1
 $OFFICE claim <id>    # pending → in-progress, increments attempts
 $OFFICE check <id>    # run the executable DoD
-$OFFICE review <id>   # hand to the Reviewer
+$OFFICE scope <id>    # committed + working changes since base_commit
+$OFFICE review <id>   # hand to Reviewer; current check + scope evidence required
+$OFFICE retry <id> --reason "..." # review -> in-progress, or blocked at the cap
 $OFFICE done <id>     # Reviewer only — records branch and commit
 $OFFICE block <id> --reason "..."   # escalate to a human
 ```

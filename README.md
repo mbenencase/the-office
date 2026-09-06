@@ -70,8 +70,8 @@ change.
 
 ### Task lifecycle
 
-Statuses move through the CLI, never by editing frontmatter. Only the Reviewer
-runs `office done`; a SWE that marks its own work complete has removed the
+Statuses move through the CLI, never by editing frontmatter. The Reviewer runs `office done` after examining the implementation; the CLI
+requires current check and scope evidence but does not authenticate agent identity. A SWE that marks its own work complete has removed the
 review from the pipeline.
 
 ```mermaid
@@ -82,16 +82,16 @@ stateDiagram-v2
     pending --> inprog : office claim
     inprog --> review : office review
     review --> completed : office done
-    review --> inprog : findings sent back
+    review --> inprog : office retry (budget available)
     inprog --> blocked : office block
-    review --> blocked : office block
+    review --> blocked : office block or exhausted retry budget
     blocked --> inprog : office claim
     completed --> [*]
 
     note right of blocked
         Needs a human.
-        Reached when attempts
-        exceeds max_attempts.
+        Reached when review fails
+        at max_attempts.
     end note
 ```
 
@@ -169,6 +169,55 @@ that must exit 0. `office validate` rejects an empty `checks:` list.
 
 A check must fail before the work and pass after. One that is already green on
 an untouched checkout verifies nothing.
+
+## Verified task execution
+
+The board must be at the root of a Git repository with an initial commit. Commit
+installed harness files and existing source changes before claiming a task.
+Board task files and the findings ledger may remain dirty.
+
+```bash
+office claim <id>                 # checks dependencies, idle board, retry budget
+# implement and commit the task code
+office check <id>                 # stores evidence for this code and contract
+office scope <id>                 # includes committed changes since base_commit
+office review <id>                # requires both pieces of current evidence
+# Reviewer examines implementation and contract
+office retry <id> --reason "..."  # returns to implementation; increments attempts
+# or, after acceptance:
+office done <id>                  # only from review, same verified commit
+```
+
+`claim` records `base_commit` once and preserves it across retries. `scope`
+compares that base with the current working tree, including staged and untracked
+files. Renames are checked as deletion plus addition. Installed `.claude/` and
+`.cursor/` files and `.the-office/config.yml` / `harness.md` are part of scope;
+only `.the-office/features/`, `findings.jsonl`, and the execution lock are board
+bookkeeping. An empty scope fails closed.
+
+`check` and `scope` save evidence under Git's `office-verification/` directory,
+not in task frontmatter. Evidence contains the base/head SHAs, a task-contract
+hash, a source-content hash, and check results or scoped paths. Any change to
+code, HEAD, checks, scope, DoD, dependencies, title, tier, or attempt budget
+requires fresh verification. Failed reruns discard the previous success.
+Checks that modify source or their own contract do not produce passing evidence.
+`review` and `done` also require committed source, so completion records the
+actual verified commit. Commit first, then run the final checks and scope.
+
+The CLI serializes lifecycle and verification commands with
+`.the-office/execution.lock`. If a process is killed and leaves a lock, confirm
+that process has stopped before removing the lock. Retry exhaustion moves a
+reviewed task to `blocked` and returns non-zero; increasing the budget is an
+explicit human recovery step. `next` and `claim` enforce one active task.
+
+Legacy active tasks without `base_commit` cannot be verified. Record their
+actual pre-task commit in that field, inspect the resulting diff, and rerun
+`check` and `scope`. Do not use current HEAD if implementation already exists.
+
+This is workflow enforcement, not a security boundary against an actor who can
+edit the repository or Git metadata. Evidence does not capture ignored files,
+external services, or environment changes; rerun checks when those change.
+Submodules are currently rejected for attestation.
 
 ## Legacy repos
 
@@ -254,9 +303,10 @@ npm install
 npm run tauri dev
 ```
 
-Open any repository folder that contains `.the-office/`. Drag tasks between
-columns to claim / review / complete / block (same transition rules as the CLI),
-and edit task markdown in the side panel.
+Open any repository folder that contains `.the-office/`. Desktop status actions call the updated installed CLI and enforce its checks.
+The browser can edit task content but cannot change lifecycle state because it
+cannot perform Git verification. Raw editors protect CLI-managed lifecycle
+fields. Upgrade the installed CLI before using desktop status actions.
 
 ## CI
 

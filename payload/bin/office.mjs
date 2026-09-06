@@ -3,13 +3,14 @@
  * office — the deterministic core of the-office.
  *
  * Every command in this file is pure computation: no model is involved, no
- * network call is made, and identical inputs always produce identical output.
+ * network call is made. Verification records the code and contract it observed.
  * Anything requiring judgement belongs to an agent, not here.
  *
  * Zero dependencies by design — Claude Code guarantees Node, and nothing else.
  */
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -244,13 +245,6 @@ function writeTask(t, text) {
   t.text = text;
 }
 
-function appendNote(t, line) {
-  let text = t.text;
-  if (!/^##\s+Notes\s*$/m.test(text)) text = text.replace(/\s*$/, '\n\n## Notes\n');
-  text = text.replace(/\s*$/, `\n- ${line}\n`);
-  writeTask(t, text);
-}
-
 /* ------------------------------------------------------------------ *
  * Output helpers
  * ------------------------------------------------------------------ */
@@ -311,14 +305,118 @@ const matchesAny = (file, globs) => globs.some((g) => globToRe(g).test(file));
 
 function git(root, args) {
   const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.trim() : null;
+  return r.status === 0 ? (args.includes('-z') ? r.stdout : r.stdout.trim()) : null;
 }
 
-function changedFiles(root) {
-  const tracked = git(root, ['diff', '--name-only', 'HEAD']) ?? git(root, ['diff', '--name-only']) ?? '';
-  const staged = git(root, ['diff', '--name-only', '--cached']) ?? '';
-  const untracked = git(root, ['ls-files', '--others', '--exclude-standard']) ?? '';
-  return [...new Set([tracked, staged, untracked].join('\n').split('\n').map((s) => s.trim()).filter(Boolean))];
+// Only board bookkeeping is excluded. Installed agents and harness controls are
+// code: changes to them must remain visible to scope and verification.
+const isBoardState = (f) => f.startsWith('.the-office/features/') || f === '.the-office/findings.jsonl' || f === '.the-office/execution.lock';
+const digest = (value) => createHash('sha256').update(value).digest('hex');
+function gitRequired(root, args) {
+  const result = git(root, args);
+  if (result === null) die(`git ${args.join(' ')} failed; verification requires a Git repository with a commit.`);
+  return result;
+}
+function gitNames(root, args) {
+  return gitRequired(root, args).split('\0').filter(Boolean);
+}
+function changedFiles(root, base = 'HEAD') {
+  return [...new Set([
+    ...gitNames(root, ['diff', '--no-renames', '--name-only', '-z', base, '--']),
+    ...gitNames(root, ['diff', '--no-renames', '--name-only', '-z', '--cached', '--']),
+    ...gitNames(root, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ])].filter((f) => !isBoardState(f)).sort();
+}
+function taskContext(id) {
+  const root = requireRoot();
+  const tasks = loadTasks(root);
+  const t = findTask(tasks, id);
+  if (!t) die(`no task matching "${id}".`);
+  return { root, tasks, t };
+}
+function requireStatus(t, allowed) {
+  if (!allowed.includes(t.data.status)) die(`task ${t.data.id} is "${t.data.status}"; expected one of: ${allowed.join(', ')}.`);
+}
+function requireBudget(t) {
+  if (!Number.isInteger(t.data.attempts ?? 0) || (t.data.attempts ?? 0) < 0 || !Number.isInteger(t.data.max_attempts ?? 3) || (t.data.max_attempts ?? 3) < 1) die('attempts and max_attempts must be valid non-negative/positive integers.');
+}
+function requireDependencies(t, tasks) {
+  if (!Array.isArray(t.data.depends_on ?? [])) die('depends_on must be a list.');
+  for (const dep of t.data.depends_on ?? []) {
+    if (!tasks.some((other) => other.data.id === dep && other.data.status === 'completed')) die(`dependency ${dep} is not completed.`);
+  }
+}
+function requireIdle(tasks, t) {
+  const active = tasks.find((other) => other.file !== t?.file && ['in-progress', 'review'].includes(other.data.status));
+  if (active) die(`work is in flight: ${active.data.id}. Sequential execution: finish it first.`);
+}
+function requireClean(root) {
+  if (changedFiles(root).length) die('commit task code before claiming, review, or completion; uncommitted code cannot be tied to a commit. Board bookkeeping may remain dirty.');
+}
+function requireBase(root, t) {
+  if (!t.data.base_commit) die('task has no base_commit; claim a pending task first. For legacy active tasks, record the actual pre-task commit in base_commit, then rerun check and scope.');
+  const base = String(t.data.base_commit);
+  if (!/^[0-9a-f]{40,64}$/.test(base)) die('base_commit must be a full commit SHA.');
+  gitRequired(root, ['merge-base', '--is-ancestor', base, 'HEAD']);
+  return base;
+}
+function evidencePath(root, t) {
+  const dir = path.resolve(root, gitRequired(root, ['rev-parse', '--git-path', 'office-verification']));
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${digest(t.expectedId)}.json`);
+}
+function snapshot(root, t) {
+  const base = requireBase(root, t);
+  if (path.resolve(gitRequired(root, ['rev-parse', '--show-toplevel'])) !== path.resolve(root)) die('the board must be at the Git repository root.');
+  const head = gitRequired(root, ['rev-parse', 'HEAD']);
+  const files = [...new Set([
+    ...gitNames(root, ['ls-files', '-z']),
+    ...gitNames(root, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ])].filter((f) => !isBoardState(f)).sort();
+  const hashes = files.map((f) => {
+    const full = path.join(root, f);
+    try {
+      const stat = fs.lstatSync(full);
+      if (stat.isDirectory()) die(`cannot attest directory/submodule ${f}; use a repository without submodules for this workflow.`);
+      return [f, stat.mode, digest(stat.isSymbolicLink() ? fs.readlinkSync(full) : fs.readFileSync(full))];
+    } catch (err) { if (err.code === 'ENOENT') return [f, null]; throw err; }
+  });
+  const contract = Object.fromEntries(['id', 'title', 'tier', 'depends_on', 'scope', 'checks', 'dod', 'max_attempts'].map((key) => [key, t.data[key]]));
+  return { base, head, contract: digest(JSON.stringify(contract)), tree: digest(JSON.stringify(hashes)) };
+}
+function readEvidence(root, t) {
+  try { return JSON.parse(fs.readFileSync(evidencePath(root, t), 'utf8')); }
+  catch (err) { if (err.code === 'ENOENT' || err instanceof SyntaxError) return {}; throw err; }
+}
+function saveEvidence(root, t, evidence) {
+  const file = evidencePath(root, t);
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(evidence, null, 2) + '\n');
+  fs.renameSync(`${file}.tmp`, file);
+}
+const sameSnapshot = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function requireVerified(root, t) {
+  requireClean(root);
+  const current = snapshot(root, t);
+  const evidence = readEvidence(root, t);
+  for (const kind of ['check', 'scope']) {
+    if (!sameSnapshot(evidence[kind]?.snapshot, current)) die(`missing or stale ${kind} evidence; rerun office check and office scope for the current code and contract.`);
+  }
+}
+function changeStatus(t, status, fields = {}, note) {
+  let text = setScalar(t.text, 'status', status);
+  for (const [key, value] of Object.entries(fields)) text = setScalar(text, key, value);
+  if (note) text = text.replace(/\s*$/, `\n- ${note}\n`);
+  // One rename publishes status and associated fields together.
+  fs.writeFileSync(`${t.file}.tmp`, text);
+  fs.renameSync(`${t.file}.tmp`, t.file);
+  t.text = text;
+  console.log(`${status} ${t.data.id}`);
+}
+function reasonArg(argv) {
+  const i = argv.indexOf('--reason');
+  const reason = i >= 0 ? argv[i + 1]?.trim() : '';
+  if (!reason) die('requires --reason "...".');
+  return reason;
 }
 
 /* ------------------------------------------------------------------ *
@@ -413,6 +511,7 @@ cmds.next = () => {
   const root = requireRoot();
   const tasks = loadTasks(root);
   const byId = new Map(tasks.map((t) => [t.data.id ?? t.expectedId, t]));
+  requireIdle(tasks);
   const ready = tasks
     .filter((t) => t.data.status === 'pending')
     .filter((t) => (t.data.depends_on ?? []).every((d) => byId.get(d)?.data.status === 'completed'))
@@ -433,116 +532,104 @@ cmds.next = () => {
   console.log(ready[0].data.id ?? ready[0].expectedId);
 };
 
-function transition(id, { from, to, mutate }) {
-  const root = requireRoot();
-  const tasks = loadTasks(root);
-  const t = findTask(tasks, id);
-  if (!t) die(`no task matching "${id}".`);
-  if (from && !from.includes(t.data.status)) {
-    die(`task ${t.data.id} is "${t.data.status}"; expected one of: ${from.join(', ')}.`);
-  }
-  let text = setScalar(t.text, 'status', to);
-  writeTask(t, text);
-  if (mutate) mutate(t, root);
-  console.log(`${c.green(to)} ${t.data.id ?? t.expectedId}`);
-  return { t, root };
-}
-
 cmds.claim = (argv) => {
-  const id = argv[0] ?? die('usage: office claim <task-id>');
-  transition(id, {
-    from: ['pending', 'blocked'],
-    to: 'in-progress',
-    mutate: (t) => {
-      const n = (t.data.attempts ?? 0) + 1;
-      writeTask(t, setScalar(t.text, 'attempts', n));
-      const max = t.data.max_attempts ?? 3;
-      if (n > max) {
-        console.error(c.yellow(`attempt ${n} exceeds max_attempts (${max}) — escalate rather than retry.`));
-      } else {
-        console.log(c.dim(`attempt ${n}/${max}`));
-      }
-    },
-  });
+  const { root, tasks, t } = taskContext(argv[0] ?? die('usage: office claim <task-id>'));
+  requireStatus(t, ['pending', 'blocked']);
+  requireIdle(tasks, t);
+  requireDependencies(t, tasks);
+  requireBudget(t);
+  const n = (t.data.attempts ?? 0) + 1;
+  if (n > (t.data.max_attempts ?? 3)) die('max_attempts reached; a human must resolve the blocker and explicitly increase the budget before retrying.');
+  requireClean(root);
+  if (path.resolve(gitRequired(root, ['rev-parse', '--show-toplevel'])) !== path.resolve(root)) die('the board must be at the Git repository root.');
+  const base = t.data.base_commit ? requireBase(root, t) : gitRequired(root, ['rev-parse', 'HEAD']);
+  saveEvidence(root, t, {});
+  changeStatus(t, 'in-progress', { attempts: n, base_commit: base });
+};
+
+cmds.retry = (argv) => {
+  const reason = reasonArg(argv);
+  const { root, tasks, t } = taskContext(argv[0]);
+  requireStatus(t, ['review']);
+  requireBudget(t);
+  requireIdle(tasks, t);
+  requireDependencies(t, tasks);
+  saveEvidence(root, t, {});
+  if ((t.data.attempts ?? 0) >= (t.data.max_attempts ?? 3)) {
+    changeStatus(t, 'blocked', {}, `**blocked:** retry budget exhausted. ${reason}`);
+    die('max_attempts reached; escalated to a human.');
+  }
+  changeStatus(t, 'in-progress', { attempts: (t.data.attempts ?? 0) + 1 }, `**review findings:** ${reason}`);
 };
 
 cmds.review = (argv) => {
-  const id = argv[0] ?? die('usage: office review <task-id>');
-  transition(id, { from: ['in-progress'], to: 'review' });
+  const { root, tasks, t } = taskContext(argv[0] ?? die('usage: office review <task-id>'));
+  requireStatus(t, ['in-progress']);
+  requireIdle(tasks, t);
+  requireDependencies(t, tasks);
+  requireVerified(root, t);
+  changeStatus(t, 'review');
 };
 
 cmds.done = (argv) => {
-  const id = argv[0] ?? die('usage: office done <task-id>');
-  transition(id, {
-    from: ['review', 'in-progress'],
-    to: 'completed',
-    mutate: (t, root) => {
-      const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
-      const commit = git(root, ['rev-parse', 'HEAD']);
-      let text = t.text;
-      if (branch) text = setScalar(text, 'branch', branch);
-      if (commit) text = setScalar(text, 'commit', commit);
-      writeTask(t, text);
-      if (branch) console.log(c.dim(`branch ${branch}  commit ${(commit ?? '').slice(0, 12)}`));
-    },
+  const { root, tasks, t } = taskContext(argv[0] ?? die('usage: office done <task-id>'));
+  requireStatus(t, ['review']);
+  requireIdle(tasks, t);
+  requireDependencies(t, tasks);
+  requireVerified(root, t);
+  changeStatus(t, 'completed', {
+    branch: gitRequired(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    commit: gitRequired(root, ['rev-parse', 'HEAD']),
   });
 };
 
 cmds.block = (argv) => {
-  const id = argv[0] ?? die('usage: office block <task-id> --reason "..."');
-  const ri = argv.indexOf('--reason');
-  const reason = ri >= 0 ? argv[ri + 1] : null;
-  if (!reason) die('office block requires --reason "..." — a blocked task with no reason is unactionable.');
-  const { t } = transition(id, { to: 'blocked' });
-  appendNote(t, `**blocked:** ${reason}`);
-  console.error(c.yellow('escalated to a human. Do not continue this task.'));
+  const reason = reasonArg(argv);
+  const { root, t } = taskContext(argv[0]);
+  requireStatus(t, ['pending', 'in-progress', 'review', 'blocked']);
+  saveEvidence(root, t, {});
+  changeStatus(t, 'blocked', {}, `**blocked:** ${reason}`);
 };
 
 cmds.check = (argv) => {
-  const root = requireRoot();
-  const id = argv[0] ?? die('usage: office check <task-id>');
-  const t = findTask(loadTasks(root), id);
-  if (!t) die(`no task matching "${id}".`);
+  const { root, t } = taskContext(argv[0] ?? die('usage: office check <task-id>'));
   const checks = t.data.checks ?? [];
-  if (!checks.length) die(`task ${t.data.id} has no checks. An unverifiable task is not a task.`);
-
-  console.log(c.dim(`running ${checks.length} check(s) for ${t.data.id}\n`));
-  for (const [i, cmd] of checks.entries()) {
-    console.log(c.bold(`[${i + 1}/${checks.length}] ${cmd}`));
+  if (!Array.isArray(checks) || !checks.length || checks.some((cmd) => typeof cmd !== 'string' || !cmd.trim())) die('task has no valid checks. The definition of done is not executable.');
+  requireStatus(t, ['in-progress', 'review']);
+  const evidence = readEvidence(root, t);
+  delete evidence.check;
+  saveEvidence(root, t, evidence);
+  const before = snapshot(root, t);
+  const results = [];
+  for (const cmd of checks) {
+    console.log(cmd);
     const r = spawnSync(cmd, { cwd: root, shell: true, stdio: 'inherit' });
-    if (r.status !== 0) {
-      console.error(`\n${c.red('FAIL')} ${cmd} (exit ${r.status})`);
-      console.error(c.dim('definition of done not met. Fix and re-run — do not mark the task complete.'));
-      process.exit(1);
-    }
-    console.log(c.green('  pass\n'));
+    if (r.status !== 0) die(`FAIL ${cmd} (exit ${r.status}); definition of done not met.`);
+    results.push({ command: cmd, exit: r.status });
   }
-  console.log(c.green(`all checks pass for ${t.data.id}`));
+  const after = snapshot(root, taskContext(t.data.id).t);
+  if (!sameSnapshot(before, after)) die('checks changed code or contract; review those changes and rerun.');
+  evidence.check = { snapshot: after, results, at: new Date().toISOString() };
+  saveEvidence(root, t, evidence);
+  console.log(`all checks pass for ${t.data.id}`);
 };
 
 cmds.scope = (argv) => {
-  const root = requireRoot();
-  const id = argv[0] ?? die('usage: office scope <task-id>');
-  const t = findTask(loadTasks(root), id);
-  if (!t) die(`no task matching "${id}".`);
-  const globs = t.data.scope ?? [];
-  if (!globs.length) { console.log(c.yellow(`task ${t.data.id} declares no scope — nothing to enforce.`)); return; }
-
-  // The harness itself is never part of a task's scope: .the-office/ is board
-  // state the CLI writes, and .claude/ / .cursor/ are installed payloads.
-  // Counting either makes every task in a repo with the-office installed fail.
-  const HARNESS = ['.the-office/', '.claude/', '.cursor/'];
-  const files = changedFiles(root).filter((f) => !HARNESS.some((h) => f.startsWith(h)));
+  const { root, t } = taskContext(argv[0] ?? die('usage: office scope <task-id>'));
+  requireStatus(t, ['in-progress', 'review']);
+  const evidence = readEvidence(root, t);
+  delete evidence.scope;
+  saveEvidence(root, t, evidence);
+  const globs = t.data.scope;
+  if (!Array.isArray(globs) || !globs.length || globs.some((g) => typeof g !== 'string' || !g.trim())) die('task must declare a non-empty scope allowlist.');
+  const current = snapshot(root, t);
+  const files = changedFiles(root, current.base);
   const outside = files.filter((f) => !matchesAny(f, globs));
-  if (!outside.length) {
-    console.log(c.green(`in scope — ${files.length} changed file(s) all match ${t.data.id}`));
-    return;
-  }
-  console.error(c.red(`${outside.length} file(s) outside the declared scope of ${t.data.id}:`));
-  for (const f of outside) console.error(`  ${f}`);
-  console.error(c.dim(`\nallowed: ${globs.join(', ')}`));
-  console.error(c.dim('Either revert these, or widen scope: in the task file and say why in Notes.'));
-  process.exit(1);
+  if (outside.length) die(`files outside the declared scope of ${t.data.id}:\n${outside.join('\n')}`);
+  if (!sameSnapshot(current, snapshot(root, taskContext(t.data.id).t))) die('code or contract changed during scope verification; rerun.');
+  evidence.scope = { snapshot: current, files, at: new Date().toISOString() };
+  saveEvidence(root, t, evidence);
+  console.log(`in scope — ${files.length} changed file(s) all match ${t.data.id}`);
 };
 
 cmds.validate = () => {
@@ -573,7 +660,8 @@ cmds.validate = () => {
     if (seen.has(id)) at(`duplicate id "${id}" (also in ${path.relative(root, seen.get(id).file)})`);
     else seen.set(id, t);
 
-    if (t.data.max_attempts !== undefined && !(t.data.max_attempts >= 1)) at('max_attempts must be >= 1');
+    if (t.data.max_attempts !== undefined && (!Number.isInteger(t.data.max_attempts) || t.data.max_attempts < 1)) at('max_attempts must be an integer >= 1');
+    if (t.data.attempts !== undefined && (!Number.isInteger(t.data.attempts) || t.data.attempts < 0)) at('attempts must be an integer >= 0');
     if (!Array.isArray(t.data.depends_on ?? [])) at('depends_on must be a list');
     if (t.data.status === 'completed' && !t.data.commit) {
       warnings.push(`${rel}: completed but no commit recorded — use \`office done\` rather than editing by hand.`);
@@ -965,6 +1053,7 @@ dod: |
   TODO — replace with the observable behaviour that proves this task is done.
 attempts: 0
 max_attempts: ${flag('max-attempts', '3')}
+base_commit: null
 branch: null
 commit: null
 ---
@@ -980,6 +1069,7 @@ commit: null
 };
 
 cmds.version = () => console.log(VERSION);
+cmds.capabilities = () => console.log(JSON.stringify({ lifecycle: 1, verification: 1 }));
 
 cmds.help = () => {
   console.log(`${c.bold('office')} ${c.dim(VERSION)} — deterministic core for the-office
@@ -992,13 +1082,14 @@ ${c.dim('board')}
 
 ${c.dim('lifecycle')}
   claim <id>                  pending|blocked -> in-progress, increments attempts
-  review <id>                 in-progress -> review
+  retry <id> --reason "..."   review -> in-progress, or blocked at the attempt limit
+  review <id>                 verified in-progress -> review
   done <id>                   -> completed, records branch + commit from git
   block <id> --reason "..."   -> blocked, escalates to a human
 
 ${c.dim('verification')}
   check <id>                  run the task's checks; exit on first failure
-  scope <id>                  assert the working diff stays inside scope globs
+  scope <id>                  assert base-to-working-tree diff stays inside scope globs
 
 ${c.dim('harness')}
   audit [--json]              detect stacks, existing controls, harnessability
@@ -1023,6 +1114,21 @@ const handler = cmds[cmd] ?? (['--version', '-v'].includes(cmd) ? cmds.version :
   ?? (['--help', '-h'].includes(cmd) ? cmds.help : null);
 if (!handler) die(`unknown command "${cmd}". Run \`office help\`.`);
 try {
+  // Serialize state/evidence writes across CLI processes, including long checks.
+  // A killed process leaves an explicit lock; never silently steal a live run.
+  if (['claim', 'retry', 'review', 'done', 'block', 'check', 'scope'].includes(cmd)) {
+    const root = requireRoot();
+    const lock = path.join(root, '.the-office', 'execution.lock');
+    let fd;
+    try { fd = fs.openSync(lock, 'wx'); }
+    catch (err) {
+      if (err.code === 'EEXIST') die('another command owns .the-office/execution.lock. If its process has exited, remove the stale lock and retry.');
+      throw err;
+    }
+    fs.writeFileSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    process.on('exit', () => fs.rmSync(lock, { force: true }));
+  }
   handler(rest);
 } catch (err) {
   die(err.message);

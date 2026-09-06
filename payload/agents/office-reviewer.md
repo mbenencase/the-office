@@ -66,11 +66,15 @@ Inventing a fresh slug every time defeats the entire steering loop.
 
 ## Verdict
 
-**Send back**: state each finding with what specifically to change. The SWE has
+**Send back**: run `office retry <id> --reason "<specific findings>"` to return
+the task to implementation. This increments attempts and invalidates evidence.
+At the attempt limit the CLI blocks the task and exits non-zero; escalate.
+State each finding with what specifically to change. The SWE has
 `max_attempts`; if this is the last one, say so.
 
 **Accept**: `node .claude/office/bin/office.mjs done <id>`. This records the
-branch and commit.
+branch and commit. It rejects missing/stale evidence and uncommitted source.
+If you change code or the task contract during review, rerun check and scope.
 
 Accept when the DoD holds and the findings you have left are genuinely minor.
 Do not hold a task hostage to preferences — if you would not block a colleague's

@@ -42,57 +42,15 @@ expect_match "sample/task-01" "picks the only unblocked task" "$ROOT/tests/fixtu
 
 echo
 echo "check — executable definition of done"
-expect_exit 0 "passes when every check exits 0"  "$ROOT/tests/fixtures/good" check sample/task-01
 expect_exit 1 "refuses a task with no checks"    "$ROOT/tests/fixtures/no-checks" check sample/task-01
 
 echo
-echo "lifecycle — state transitions"
-WORK=$(mktemp -d); cp -r "$ROOT/tests/fixtures/good/.the-office" "$WORK/"
-expect_exit 0 "claim pending -> in-progress"     "$WORK" claim sample/task-01
-expect_exit 1 "refuses to claim twice"           "$WORK" claim sample/task-01
-expect_exit 0 "review in-progress -> review"     "$WORK" review sample/task-01
-expect_exit 0 "done review -> completed"         "$WORK" "done" sample/task-01
-if grep -q '^attempts: 1$' "$WORK/.the-office/features/sample/task-01.md"; then ok "increments attempts"; else bad "increments attempts"; fi
-if grep -q '^status: completed$' "$WORK/.the-office/features/sample/task-01.md"; then ok "persists status"; else bad "persists status"; fi
-if grep -q '^## Notes$' "$WORK/.the-office/features/sample/task-01.md"; then ok "preserves the body across rewrites"; else bad "preserves the body across rewrites"; fi
-expect_match "sample/task-02" "next advances once the dep completes" "$WORK" next
-expect_exit 1 "block requires a reason"          "$WORK" block sample/task-02
-expect_exit 0 "block with a reason escalates"    "$WORK" block sample/task-02 --reason "needs a human"
-if grep -q 'blocked:' "$WORK/.the-office/features/sample/task-02.md"; then ok "writes the reason into Notes"; else bad "writes the reason into Notes"; fi
-rm -rf "$WORK"
-
-echo
-echo "scope — allowlist enforcement"
-WORK=$(mktemp -d); (cd "$WORK" && git init -q .)
-cp -r "$ROOT/tests/fixtures/good/.the-office" "$WORK/"
-mkdir -p "$WORK/src" "$WORK/.claude/agents" "$WORK/other"
-echo "ok" > "$WORK/src/a.txt"
-echo "payload" > "$WORK/.claude/agents/office-swe.md"
-python3 - "$WORK" <<'PYEOF'
-import sys, pathlib
-p = pathlib.Path(sys.argv[1], '.the-office/features/sample/task-01.md')
-p.write_text(p.read_text().replace('scope:\n  - src/**', 'scope:\n  - src/**'))
-PYEOF
-expect_exit 0 "passes when changes are inside scope" "$WORK" scope sample/task-01
-echo "stray" > "$WORK/other/b.txt"
-expect_exit 1 "fails when a change escapes scope"    "$WORK" scope sample/task-01
-expect_match "other/b.txt" "names the offending file" "$WORK" scope sample/task-01
-# Capture once, then match. Piping a node process into `grep -q` races: grep
-# exits on first match, node takes SIGPIPE, and pipefail reports 141 as "no match".
-scope_out="$( (cd "$WORK" && $OFFICE scope sample/task-01) 2>&1 || true)"
-if printf '%s\n' "$scope_out" | grep -q 'src/a.txt'; then
-  bad "does not flag in-scope files" "src/a.txt was listed as out of scope"
-else ok "does not flag in-scope files"; fi
-if printf '%s\n' "$scope_out" | grep -q '\.claude/'; then
-  bad "ignores the installed harness payload" ".claude/ was counted as task work"
-else ok "ignores the installed harness payload"; fi
-mkdir -p "$WORK/.cursor/agents"
-echo "payload" > "$WORK/.cursor/agents/office-swe.md"
-scope_out="$( (cd "$WORK" && $OFFICE scope sample/task-01) 2>&1 || true)"
-if printf '%s\n' "$scope_out" | grep -q '\.cursor/'; then
-  bad "ignores the cursor harness payload" ".cursor/ was counted as task work"
-else ok "ignores the cursor harness payload"; fi
-rm -rf "$WORK"
+echo "lifecycle and verification — adversarial integration tests"
+if node --test "$ROOT/tests/lifecycle.test.mjs"; then
+  ok "lifecycle and evidence integration suite"
+else
+  bad "lifecycle and evidence integration suite"
+fi
 
 echo
 echo "findings — the steering loop's input"

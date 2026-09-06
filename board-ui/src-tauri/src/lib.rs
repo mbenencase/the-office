@@ -1,8 +1,7 @@
 mod board;
 
 use board::{
-    append_note, emit_number, emit_scalar, find_root, load_board, set_scalar, write_task_file,
-    BoardError, BoardState, Task,
+    emit_scalar, find_root, load_board, set_scalar, write_task_file, BoardError, BoardState, Task,
 };
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -25,6 +24,22 @@ fn reload_board(root: String) -> Result<BoardState, BoardError> {
     load_board(Path::new(&root))
 }
 
+fn protect_lifecycle_fields(previous: &str, proposed: &str) -> Result<(), BoardError> {
+    let parse = |text: &str| -> Result<serde_yaml::Value, BoardError> {
+        let (fm, _) = board::split_frontmatter(text)
+            .ok_or_else(|| BoardError::Message("no frontmatter".into()))?;
+        serde_yaml::from_str(fm).map_err(|e| BoardError::Message(e.to_string()))
+    };
+    let before = parse(previous)?;
+    let after = parse(proposed)?;
+    for key in ["id", "status", "attempts", "base_commit", "branch", "commit"] {
+        if before[key] != after[key] {
+            return Err(BoardError::Message(format!("{key} is managed by the office CLI; use a lifecycle action.")));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveTaskInput {
@@ -36,6 +51,8 @@ struct SaveTaskInput {
 #[tauri::command]
 fn save_task(input: SaveTaskInput) -> Result<Task, BoardError> {
     let path = PathBuf::from(&input.path);
+    let previous = std::fs::read_to_string(&path)?;
+    protect_lifecycle_fields(&previous, &input.raw)?;
     write_task_file(&path, &input.raw)?;
     let root = find_root(&path).ok_or_else(|| BoardError::Message("board root lost".into()))?;
     let state = load_board(&root)?;
@@ -51,103 +68,53 @@ fn save_task(input: SaveTaskInput) -> Result<Task, BoardError> {
 struct TransitionInput {
     root: String,
     id: String,
-    /// claim | review | done | block
+    /// claim | review | done | block | retry
     action: String,
     reason: Option<String>,
 }
 
-fn load_task(root: &Path, id: &str) -> Result<(BoardState, Task), BoardError> {
-    let state = load_board(root)?;
-    let task = state
-        .tasks
-        .iter()
-        .find(|t| t.id == id || t.id.ends_with(&format!("/{id}")))
-        .cloned()
-        .ok_or_else(|| BoardError::Message(format!("no task matching \"{id}\".")))?;
-    Ok((state, task))
-}
-
-fn git(root: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
-}
-
+// Lifecycle decisions belong to the installed CLI so the UI cannot bypass
+// verification or drift from dependency and retry rules.
 #[tauri::command]
 fn transition_task(input: TransitionInput) -> Result<BoardState, BoardError> {
     let root = PathBuf::from(&input.root);
-    let (_, task) = load_task(&root, &input.id)?;
-    let path = PathBuf::from(&task.path);
-    let mut text = std::fs::read_to_string(&path)?;
-
-    match input.action.as_str() {
-        "claim" => {
-            if !matches!(task.status.as_str(), "pending" | "blocked") {
-                return Err(BoardError::Message(format!(
-                    "task {} is \"{}\"; expected one of: pending, blocked.",
-                    task.id, task.status
-                )));
-            }
-            text = set_scalar(&text, "status", "in-progress")?;
-            let n = task.attempts.unwrap_or(0) + 1;
-            text = set_scalar(&text, "attempts", &emit_number(n))?;
-            write_task_file(&path, &text)?;
-        }
-        "review" => {
-            if task.status != "in-progress" {
-                return Err(BoardError::Message(format!(
-                    "task {} is \"{}\"; expected one of: in-progress.",
-                    task.id, task.status
-                )));
-            }
-            text = set_scalar(&text, "status", "review")?;
-            write_task_file(&path, &text)?;
-        }
-        "done" => {
-            if !matches!(task.status.as_str(), "review" | "in-progress") {
-                return Err(BoardError::Message(format!(
-                    "task {} is \"{}\"; expected one of: review, in-progress.",
-                    task.id, task.status
-                )));
-            }
-            text = set_scalar(&text, "status", "completed")?;
-            if let Some(branch) = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]) {
-                text = set_scalar(&text, "branch", &emit_scalar(&branch))?;
-            }
-            if let Some(commit) = git(&root, &["rev-parse", "--short", "HEAD"]) {
-                text = set_scalar(&text, "commit", &emit_scalar(&commit))?;
-            }
-            write_task_file(&path, &text)?;
-        }
-        "block" => {
-            let reason = input
-                .reason
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| BoardError::Message("block requires a reason.".into()))?;
-            text = set_scalar(&text, "status", "blocked")?;
-            text = append_note(&text, &format!("blocked: {reason}"));
-            write_task_file(&path, &text)?;
-        }
-        other => {
-            return Err(BoardError::Message(format!(
-                "unknown action \"{other}\". Use claim, review, done, or block."
-            )));
-        }
+    if !matches!(
+        input.action.as_str(),
+        "claim" | "review" | "done" | "block" | "retry"
+    ) {
+        return Err(BoardError::Message("unknown lifecycle action".into()));
     }
-
+    let cli = [".claude/office/bin/office.mjs", ".cursor/office/bin/office.mjs"]
+        .iter()
+        .map(|relative| root.join(relative))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| BoardError::Message("Install or upgrade the-office in this repository before changing task status.".into()))?;
+    let probe = Command::new("node")
+        .arg(&cli)
+        .arg("capabilities")
+        .current_dir(&root)
+        .output()?;
+    let capabilities: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap_or_default();
+    if !probe.status.success() || capabilities["lifecycle"] != 1 || capabilities["verification"] != 1 {
+        return Err(BoardError::Message("Upgrade the installed office CLI before changing task status.".into()));
+    }
+    let mut command = Command::new("node");
+    command
+        .arg(cli)
+        .arg(&input.action)
+        .arg(&input.id)
+        .current_dir(&root);
+    if let Some(reason) = input.reason {
+        command.arg("--reason").arg(reason);
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(BoardError::Message(format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
     load_board(&root)
 }
 
@@ -262,4 +229,30 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::protect_lifecycle_fields;
+
+    #[test]
+    fn raw_editor_cannot_bypass_lifecycle() {
+        let original = "---\nid: demo/task-01\nstatus: pending\nattempts: 0\nbase_commit: null\nbranch: null\ncommit: null\n---\n";
+        for (old, new) in [
+            ("status: pending", "status: completed"),
+            ("attempts: 0", "attempts: 3"),
+            ("base_commit: null", "base_commit: abc"),
+            ("commit: null", "commit: abc"),
+            ("id: demo/task-01", "id: demo/task-02"),
+        ] {
+            assert!(protect_lifecycle_fields(original, &original.replace(old, new)).is_err());
+        }
+    }
+
+    #[test]
+    fn raw_editor_accepts_content_and_explicit_budget_updates() {
+        let original = "---\nid: demo/task-01\nstatus: blocked\nmax_attempts: 3\n---\nOld context\n";
+        let updated = original.replace("max_attempts: 3", "max_attempts: 4").replace("Old context", "New context");
+        assert!(protect_lifecycle_fields(original, &updated).is_ok());
+    }
 }

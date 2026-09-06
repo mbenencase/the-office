@@ -1,6 +1,5 @@
 import type { BoardState, Status, Task } from "../types";
 import {
-  appendNote,
   emitScalar,
   parseYaml,
   replaceBody,
@@ -156,67 +155,13 @@ function requireRoot(): FileSystemDirectoryHandle {
   return rootHandle;
 }
 
-function findTask(tasks: Task[], id: string): Task | undefined {
-  return (
-    tasks.find((t) => t.id === id) ||
-    tasks.find((t) => t.id.endsWith(`/${id}`))
-  );
-}
-
 export async function transitionBrowserTask(
   _root: string,
-  id: string,
-  action: "claim" | "review" | "done" | "block",
-  reason?: string,
+  _id: string,
+  _action: "claim" | "review" | "done" | "block",
+  _reason?: string,
 ): Promise<BoardState> {
-  const root = requireRoot();
-  const board = await loadBrowserBoard();
-  const task = findTask(board.tasks, id);
-  if (!task) throw new Error(`no task matching "${id}".`);
-
-  let text = await readTextFile(root, task.path);
-
-  switch (action) {
-    case "claim": {
-      if (!["pending", "blocked"].includes(task.status)) {
-        throw new Error(
-          `task ${task.id} is "${task.status}"; expected one of: pending, blocked.`,
-        );
-      }
-      text = setScalar(text, "status", "in-progress");
-      const n = (task.attempts ?? 0) + 1;
-      text = setScalar(text, "attempts", emitScalar(n));
-      break;
-    }
-    case "review": {
-      if (task.status !== "in-progress") {
-        throw new Error(
-          `task ${task.id} is "${task.status}"; expected one of: in-progress.`,
-        );
-      }
-      text = setScalar(text, "status", "review");
-      break;
-    }
-    case "done": {
-      if (!["review", "in-progress"].includes(task.status)) {
-        throw new Error(
-          `task ${task.id} is "${task.status}"; expected one of: review, in-progress.`,
-        );
-      }
-      text = setScalar(text, "status", "completed");
-      break;
-    }
-    case "block": {
-      const why = reason?.trim();
-      if (!why) throw new Error("block requires a reason.");
-      text = setScalar(text, "status", "blocked");
-      text = appendNote(text, `blocked: ${why}`);
-      break;
-    }
-  }
-
-  await writeTextFile(root, task.path, text);
-  return loadBrowserBoard();
+  throw new Error("Status changes require Git verification. Use the desktop app with the updated office CLI, or run the CLI in this repository, then reload the board.");
 }
 
 export async function updateBrowserTaskContent(input: {
@@ -248,6 +193,17 @@ export async function updateBrowserTaskContent(input: {
 
 export async function saveBrowserTaskRaw(path: string, raw: string): Promise<Task> {
   const root = requireRoot();
+  const previous = await readTextFile(root, path);
+  const beforeFm = splitFrontmatter(previous);
+  const afterFm = splitFrontmatter(raw);
+  if (!beforeFm || !afterFm) throw new Error("Task frontmatter is required.");
+  const before = parseYaml(beforeFm.fmLines);
+  const after = parseYaml(afterFm.fmLines);
+  for (const key of ["id", "status", "attempts", "base_commit", "branch", "commit"]) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      throw new Error(`${key} is managed by the office CLI.`);
+    }
+  }
   await writeTextFile(root, path, raw);
   const board = await loadBrowserBoard();
   const task = board.tasks.find((t) => t.path === path);

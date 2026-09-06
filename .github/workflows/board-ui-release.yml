@@ -78,6 +78,11 @@ jobs:
         working-directory: board-ui
         run: npm ci
 
+      - name: test native board rules
+        if: runner.os == 'Linux'
+        working-directory: board-ui
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
       - name: build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
