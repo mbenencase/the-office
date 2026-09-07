@@ -37,3 +37,12 @@ npm run tauri build
 
 Requires the usual [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/)
 (`webkit2gtk`, `libgtk-3`, etc.) plus Rust and Node.
+
+### Verified lifecycle
+
+Desktop status actions require Node and an updated the-office CLI installed in
+`.claude/office/` or `.cursor/office/`. They delegate to that CLI, which enforces
+dependencies, retry budgets, committed code, and current check/scope evidence.
+Browser lifecycle actions are unavailable because the browser cannot verify Git.
+Task content remains editable; raw edits cannot change CLI-managed lifecycle
+fields. Use `office retry <id> --reason "..."` for review findings, then reload.

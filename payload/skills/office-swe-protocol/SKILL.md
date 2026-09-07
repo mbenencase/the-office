@@ -9,14 +9,17 @@ description: The execution contract for the SWE role in the-office — scope dis
 OFFICE="node .claude/office/bin/office.mjs"
 ```
 
-## 1. Claim exactly one task
+## 1. Claim or resume exactly one task
 
 ```bash
 $OFFICE next
 $OFFICE claim <id>
 ```
 
-`claim` increments `attempts`. If it reports you are over `max_attempts`, do not
+On a Reviewer retry, the CLI has already returned the task to `in-progress`
+and incremented `attempts`; resume that task without calling `next` or `claim`.
+For a new task, commit pre-existing source and installed harness changes first.
+`claim` records the initial Git `base_commit` and increments `attempts`. If it reports you are over `max_attempts`, do not
 start — escalate.
 
 Read the whole task file, including Notes. On a retry, Notes holds the
@@ -68,7 +71,10 @@ runtime and catches the defect before it is written.
 Not every task establishes an invariant. Inventing one to fill the field is
 worse than leaving it empty.
 
-## 5. Verify, then hand off
+## 5. Commit, verify, then hand off
+
+Commit the implementation first. Final evidence must belong to that commit;
+committing after verification invalidates it. Board task metadata can remain dirty.
 
 ```bash
 $OFFICE check <id>    # every check, exit 0
@@ -87,7 +93,9 @@ Do not run `$OFFICE done`. Completion is the Reviewer's call.
 
 ## Retries
 
-The Reviewer sends findings back with specific changes. Address them, re-run the
+The Reviewer runs `office retry <id> --reason "..."` to send findings back.
+This increments attempts, clears evidence, and blocks when the budget is exhausted.
+The original base commit remains unchanged. Address them, re-run the
 checks, hand back. You have `max_attempts` total.
 
 On the last attempt, if it is still not right:
