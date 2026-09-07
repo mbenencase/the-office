@@ -26,16 +26,15 @@ Read the whole task file, including Notes. On a retry, Notes holds the
 Reviewer's findings and the previous attempt's reasoning. Re-reading them is
 cheaper than rediscovering why the last attempt failed.
 
-## 2. Confirm the checks fail
+## 2. Establish the appropriate baseline
 
-Run `$OFFICE check <id>` *before* implementing.
-
-They should fail. If they already pass on an untouched checkout, the check
-verifies nothing about this task — say so and hand back to the Planner rather
-than implementing against a check that cannot detect whether you succeeded.
-
-This costs thirty seconds and catches the most expensive class of planning
-defect there is.
+Read the `office-spec` skill and the task's `verification_mode`.
+For regression work reproduce the defect and demonstrate a failing targeted test.
+For new behavior write outcome checks. For preservation work establish green
+characterization tests before editing and keep them green afterward. Build,
+typing, lint, and existing regression checks may already pass. A failure caused
+only by a missing test file or dependency is not evidence of the intended defect.
+Run `$OFFICE check <id>` after claim; inspect why any check fails.
 
 ## 3. Implement, inside scope
 

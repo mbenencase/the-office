@@ -23,9 +23,9 @@ the flaky login test" is a feature; "our tests are flaky" is a harness problem.
 
 **`trivial`** — a single, well-understood, low-blast-radius change: a typo, a
 constant, a log line, a version bump, a one-file fix with an obvious shape.
-Route straight to the SWE.
+Route to the Product Owner for a compact typed spec and Gate 1, then a fast SWE.
 
-A trivial change still gets a task file. Without one it bypasses `checks`
+A trivial change still gets a compact approved spec and a linked task file. Without one it bypasses `checks`
 entirely, and that is exactly where regressions hide. Create it with:
 `node .claude/office/bin/office.mjs task new <feature> --title "..." --tier fast`
 
@@ -49,6 +49,7 @@ Return exactly this, nothing else:
 
 ```
 route: harness | trivial | feature
+spec_type: bug | feature | refactor
 reason: <one sentence>
 feature_slug: <kebab-case slug, only for trivial and feature>
 ```

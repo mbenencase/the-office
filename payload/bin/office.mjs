@@ -91,6 +91,7 @@ function parseMap(lines, i, indent) {
     const m = /^\s*([A-Za-z_][\w.-]*):\s*(.*)$/.exec(raw);
     if (!m) { i++; continue; }
     const key = m[1];
+    if (Object.hasOwn(out, key)) throw new Error(`duplicate YAML key "${key}"`);
     const rest = stripComment(m[2]).trim();
 
     if (rest === '|' || rest === '|-' || rest === '>' || rest === '>-') {
@@ -365,6 +366,89 @@ function evidencePath(root, t) {
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, `${digest(t.expectedId)}.json`);
 }
+const SPEC_TYPES = ['bug', 'feature', 'refactor'];
+const SPEC_SECTIONS = {
+  bug: ['Current behavior', 'Expected behavior', 'Reproduction', 'Environment and evidence', 'Hypotheses'],
+  feature: ['User flows', 'Business rules', 'Data and integrations', 'Failure and empty states'],
+  refactor: ['Structural problem', 'Change boundary', 'Behavior invariants', 'Migration strategy'],
+};
+function featureDir(root, slug) {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug ?? '')) throw new Error('feature slug must use lowercase letters, digits, and hyphens');
+  return path.join(root, '.the-office', 'features', slug);
+}
+const meaningful = (v) => typeof v === 'string' && v.trim() && !/\bTODO\b|\{\{/.test(v);
+const isMap = (v) => v && typeof v === 'object' && !Array.isArray(v);
+function readSpec(root, slug) {
+  const dir = featureDir(root, slug);
+  const file = path.join(dir, 'overview.md');
+  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') : '';
+  const fm = splitFrontmatter(text);
+  const data = fm ? parseYaml(fm.fmLines) : {};
+  const required = fs.existsSync(path.join(dir, 'spec-approval.json')) || loadTasks(root, slug).some((t) => t.data.spec_required);
+  if (!Object.hasOwn(data, 'spec_version')) {
+    if (required) throw new Error(`${slug}: required spec is missing or its schema marker was removed`);
+    return null; // Explicit compatibility for pre-spec boards.
+  }
+  return { dir, text, data, hash: digest(text) };
+}
+function validateSpec(root, slug, plan = false) {
+  const spec = readSpec(root, slug);
+  if (!spec) throw new Error(`${slug}: legacy overview; migrate to a typed spec first`);
+  const { data, text } = spec;
+  const fail = (message) => { throw new Error(`${slug}: ${message}`); };
+  if (data.spec_version !== 1 || data.id !== slug || !SPEC_TYPES.includes(data.type)) fail('invalid spec_version, id, or type');
+  if (!isMap(data.requirements) || !Object.keys(data.requirements).length) fail('requirements must be a non-empty map');
+  if (!isMap(data.acceptance_criteria) || !Object.keys(data.acceptance_criteria).length) fail('acceptance_criteria must be a non-empty map');
+  if (!Array.isArray(data.open_questions)) fail('open_questions must be a list');
+  for (const [id, description] of Object.entries(data.requirements)) {
+    if (!/^REQ-[0-9]{3,}$/.test(id) || !meaningful(description)) fail(`invalid requirement ${id}`);
+    if (!Object.values(data.acceptance_criteria).some((ac) => ac?.requirement === id)) fail(`${id} has no acceptance criterion`);
+  }
+  for (const [id, ac] of Object.entries(data.acceptance_criteria)) {
+    if (!/^AC-[0-9]{3,}$/.test(id) || !isMap(ac) || !Object.hasOwn(data.requirements, ac.requirement) || !meaningful(ac.description)) fail(`invalid acceptance criterion ${id} or unknown requirement`);
+  }
+  const sections = new Map();
+  for (const part of text.split(/^## /m).slice(1)) {
+    const end = part.indexOf('\n');
+    const name = part.slice(0, end).trim();
+    if (sections.has(name)) fail(`duplicate section ${name}`);
+    sections.set(name, part.slice(end + 1).replace(/<!--[\s\S]*?-->/g, '').trim());
+  }
+  for (const name of ['Request', 'Objective', 'Out of scope', 'Constraints', 'Assumptions', 'Harness impact', ...SPEC_SECTIONS[data.type]]) {
+    if (!meaningful(sections.get(name))) fail(`fill section ${name}`);
+  }
+  const tasks = loadTasks(root, slug);
+  if (plan) {
+    if (!tasks.length) fail('plan has no tasks');
+    const covered = new Set();
+    for (const t of tasks) {
+      const refs = t.data.requirements;
+      const criteria = t.data.acceptance_criteria;
+      if (!Array.isArray(refs) || !refs.length || new Set(refs).size !== refs.length || refs.some((id) => !Object.hasOwn(data.requirements, id))) fail(`${t.expectedId}: invalid requirements references`);
+      if (!Array.isArray(criteria) || !criteria.length || new Set(criteria).size !== criteria.length || criteria.some((id) => !Object.hasOwn(data.acceptance_criteria, id))) fail(`${t.expectedId}: invalid acceptance_criteria references`);
+      for (const id of criteria) {
+        if (!refs.includes(data.acceptance_criteria[id].requirement)) fail(`${t.expectedId}: ${id} is not linked to a declared requirement`);
+        covered.add(id);
+      }
+      if (refs.some((id) => !criteria.some((ac) => data.acceptance_criteria[ac].requirement === id))) fail(`${t.expectedId}: requirement reference has no criterion`);
+      if (!['regression', 'acceptance', 'preservation'].includes(t.data.verification_mode)) fail(`${t.expectedId}: invalid verification_mode`);
+    }
+    for (const ac of Object.keys(data.acceptance_criteria)) if (!covered.has(ac)) fail(`${ac} has no task coverage`);
+  }
+  return spec;
+}
+function specApproval(spec) {
+  try { return JSON.parse(fs.readFileSync(path.join(spec.dir, 'spec-approval.json'), 'utf8')); }
+  catch (err) { if (err.code === 'ENOENT' || err instanceof SyntaxError) return null; throw err; }
+}
+function requireSpec(root, t) {
+  if (!readSpec(root, t.feature)) return null;
+  const spec = validateSpec(root, t.feature, true);
+  if (spec.data.open_questions.length) throw new Error(`${t.feature}: resolve open_questions before execution`);
+  if (specApproval(spec)?.hash !== spec.hash) throw new Error(`${t.feature}: spec approval is missing or stale; confirm the updated spec with the human`);
+  return spec.hash;
+}
+
 function snapshot(root, t) {
   const base = requireBase(root, t);
   if (path.resolve(gitRequired(root, ['rev-parse', '--show-toplevel'])) !== path.resolve(root)) die('the board must be at the Git repository root.');
@@ -381,8 +465,8 @@ function snapshot(root, t) {
       return [f, stat.mode, digest(stat.isSymbolicLink() ? fs.readlinkSync(full) : fs.readFileSync(full))];
     } catch (err) { if (err.code === 'ENOENT') return [f, null]; throw err; }
   });
-  const contract = Object.fromEntries(['id', 'title', 'tier', 'depends_on', 'scope', 'checks', 'dod', 'max_attempts'].map((key) => [key, t.data[key]]));
-  return { base, head, contract: digest(JSON.stringify(contract)), tree: digest(JSON.stringify(hashes)) };
+  const contract = Object.fromEntries(['id', 'title', 'tier', 'depends_on', 'scope', 'checks', 'dod', 'max_attempts', 'requirements', 'acceptance_criteria', 'verification_mode'].map((key) => [key, t.data[key]]));
+  return { base, head, spec: requireSpec(root, t), contract: digest(JSON.stringify(contract)), tree: digest(JSON.stringify(hashes)) };
 }
 function readEvidence(root, t) {
   try { return JSON.parse(fs.readFileSync(evidencePath(root, t), 'utf8')); }
@@ -535,6 +619,7 @@ cmds.next = () => {
 cmds.claim = (argv) => {
   const { root, tasks, t } = taskContext(argv[0] ?? die('usage: office claim <task-id>'));
   requireStatus(t, ['pending', 'blocked']);
+  requireSpec(root, t);
   requireIdle(tasks, t);
   requireDependencies(t, tasks);
   requireBudget(t);
@@ -691,6 +776,13 @@ cmds.validate = () => {
     state.set(id, 'done');
   };
   for (const id of seen.keys()) visit(id);
+
+  const features = path.join(root, '.the-office', 'features');
+  if (fs.existsSync(features)) for (const slug of fs.readdirSync(features)) {
+    if (!fs.statSync(path.join(features, slug)).isDirectory()) continue;
+    try { if (readSpec(root, slug)) validateSpec(root, slug, tasks.some((t) => t.feature === slug)); }
+    catch (err) { errors.push(err.message); }
+  }
 
   for (const w of warnings) console.error(`${c.yellow('warn')}  ${w}`);
   if (errors.length) {
@@ -1000,30 +1092,38 @@ cmds.findings = (argv) => {
  * scaffolding
  * ------------------------------------------------------------------ */
 
+cmds.spec = (argv) => {
+  const root = requireRoot();
+  const [action, slug] = argv;
+  if (!['validate', 'status', 'approve'].includes(action)) die('usage: office spec validate|status|approve <slug> [--plan] [--hash SHA --by NAME]');
+  const spec = validateSpec(root, slug, argv.includes('--plan'));
+  if (action === 'approve') {
+    const flag = (key) => { const i = argv.indexOf(`--${key}`); return i < 0 ? null : argv[i + 1]; };
+    if (spec.data.open_questions.length) die('resolve open_questions before approval; record resolved decisions or accepted assumptions in the spec');
+    if (flag('hash') !== spec.hash || !flag('by')?.trim()) die('approval requires the exact current --hash and a non-empty --by after human confirmation');
+    const file = path.join(spec.dir, 'spec-approval.json');
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify({ hash: spec.hash, by: flag('by'), at: new Date().toISOString() }, null, 2) + '\n');
+    fs.renameSync(`${file}.tmp`, file);
+  }
+  console.log(JSON.stringify({ id: slug, type: spec.data.type, hash: spec.hash, status: specApproval(spec)?.hash === spec.hash ? 'approved' : specApproval(spec) ? 'stale' : 'draft', open_questions: spec.data.open_questions.length }));
+};
+
 cmds.feature = (argv) => {
   const root = requireRoot();
-  if (argv[0] !== 'new') die('usage: office feature new <slug> [--title "..."]');
-  const slug = argv[1] ?? die('usage: office feature new <slug>');
-  const ti = argv.indexOf('--title');
-  const title = ti >= 0 ? argv[ti + 1] : slug;
-  const dir = path.join(root, '.the-office', 'features', slug);
+  if (argv[0] !== 'new') die('usage: office feature new <slug> [--type bug|feature|refactor] [--title "..."]');
+  const slug = argv[1];
+  const flag = (key, fallback) => { const i = argv.indexOf(`--${key}`); return i < 0 ? fallback : argv[i + 1]; };
+  const type = flag('type', 'feature');
+  if (!SPEC_TYPES.includes(type)) die('type must be bug, feature, or refactor');
+  const dir = featureDir(root, slug);
   if (fs.existsSync(dir)) die(`feature "${slug}" already exists.`);
+  const templates = ['../templates', '../../templates'].map((rel) => path.resolve(HERE, rel));
+  const template = templates.map((d) => path.join(d, `spec-${type}.md.tmpl`)).find((f) => fs.existsSync(f));
+  if (!template) die('spec templates missing; upgrade the installed payload');
+  const text = fs.readFileSync(template, 'utf8').replaceAll('{{SLUG}}', slug).replaceAll('{{TITLE}}', flag('title', slug));
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'overview.md'), `# ${title}
-
-## Request
-<!-- The user's request, as clarified by the Product Owner. -->
-
-## Understanding
-<!-- What the Product Owner confirmed at Gate 1. -->
-
-## Out of scope
-<!-- Named explicitly, so the Planner does not quietly widen the work. -->
-
-## Harness impact
-<!-- Which controls this feature adds or relies on. -->
-`);
-  console.log(`${c.green('created')} .the-office/features/${slug}/`);
+  fs.writeFileSync(path.join(dir, 'overview.md'), text);
+  console.log(`created .the-office/features/${slug}/overview.md (${type}); fill the draft and run office spec validate ${slug}`);
 };
 
 cmds.task = (argv) => {
@@ -1031,19 +1131,21 @@ cmds.task = (argv) => {
   if (argv[0] !== 'new') die('usage: office task new <feature> --title "..." [--tier standard]');
   const feature = argv[1] ?? die('usage: office task new <feature> --title "..."');
   const flag = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
-  const dir = path.join(root, '.the-office', 'features', feature);
+  const dir = featureDir(root, feature);
   if (!fs.existsSync(dir)) die(`no feature "${feature}". Run: office feature new ${feature}`);
 
   const existing = fs.readdirSync(dir).filter((f) => /^task-\d+\.md$/.test(f));
-  const no = existing.length + 1;
+  const no = Math.max(0, ...existing.map((f) => Number(f.match(/^task-(\d+)\.md$/)[1]))) + 1;
   const name = `task-${String(no).padStart(2, '0')}`;
   const title = flag('title', 'untitled');
+  const spec = readSpec(root, feature);
+  const mode = spec ? { bug: 'regression', feature: 'acceptance', refactor: 'preservation' }[spec.data.type] : null;
 
   fs.writeFileSync(path.join(dir, `${name}.md`), `---
 id: ${feature}/${name}
 task_no: ${no}
-title: ${title}
-depends_on: []
+title: ${emit(title)}
+${spec ? `spec_required: true\nrequirements: []\nacceptance_criteria: []\nverification_mode: ${mode}\n` : ''}depends_on: []
 status: pending
 tier: ${flag('tier', 'standard')}
 scope: []
@@ -1101,7 +1203,9 @@ ${c.dim('harness')}
   findings list               the whole ledger
 
 ${c.dim('scaffolding')}
-  feature new <slug> [--title "..."]
+  spec validate|status <slug> [--plan]
+  spec approve <slug> --hash SHA --by NAME
+  feature new <slug> [--type bug|feature|refactor] [--title "..."]
   task new <feature> --title "..." [--tier fast|standard|deep]
 
 ${c.dim('Nothing here uses a model. If a decision needs judgement, it belongs to an agent.')}`);
@@ -1116,7 +1220,7 @@ if (!handler) die(`unknown command "${cmd}". Run \`office help\`.`);
 try {
   // Serialize state/evidence writes across CLI processes, including long checks.
   // A killed process leaves an explicit lock; never silently steal a live run.
-  if (['claim', 'retry', 'review', 'done', 'block', 'check', 'scope'].includes(cmd)) {
+  if (['claim', 'retry', 'review', 'done', 'block', 'check', 'scope', 'feature', 'task'].includes(cmd) || (cmd === 'spec' && rest[0] === 'approve')) {
     const root = requireRoot();
     const lock = path.join(root, '.the-office', 'execution.lock');
     let fd;

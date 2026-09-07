@@ -33,7 +33,7 @@ If a question can be answered by the CLI, it is not a question for a model.
 ```
 request
   └─ office-judge ──┬─ harness  → office-manager ─────────────────── GATE 3
-                    ├─ trivial  → office-swe-fast ──┐
+                    ├─ trivial  → PO + compact spec → GATE 1 → linked fast task
                     └─ feature  → office-product-owner ── GATE 1
                                      └─ office-planner ⇄ office-devils-advocate
                                             (≤ plan_iterations)     GATE 2
@@ -89,3 +89,11 @@ $OFFICE block <id> --reason "..."   # escalate to a human
 `plan_iterations` and `review_iterations` (default 3) bound the two loops. On
 exceeding one, stop and escalate with both positions stated. A fourth pass at
 the same disagreement is not converging, it is spinning.
+
+## Specifications
+
+Read `office-spec` for every new bug, feature, or refactor, including compact
+trivial requests. The Product Owner turns informal input into overview.md, obtains
+Gate 1 approval tied to its hash, and the Planner links tasks to requirement and
+criterion IDs. `claim`, `check`, `review`, and `done` reject stale specs. Preserve
+legacy boards explicitly; do not remove spec markers to bypass approval.

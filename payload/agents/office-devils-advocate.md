@@ -20,8 +20,8 @@ every task, ask: *if I implemented this wrongly but plausibly, would these
 checks still pass?* If yes, the check is decorative.
 
 Specifically hunt for:
-- Checks that pass on an untouched checkout. Run them. A check that is already
-  green verifies nothing about the work.
+- A regression test that does not detect the defect, or an acceptance test that
+  does not assert the new outcome. Preservation checks can correctly start green.
 - Checks that test the mechanism instead of the behaviour (`the function was
   called` rather than `the rate limit held`).
 - A `dod:` that promises something no check touches at all.
@@ -83,3 +83,7 @@ always finds something teaches everyone to ignore the findings.
 
 On approval, this is **Gate 2**: stop and show the human the board before any
 code is written.
+
+Read `office-spec`; run `office spec validate <slug> --plan` and assess whether
+the linked checks actually demonstrate each criterion. Structural coverage alone
+is insufficient. Keep feedback in task Notes, not the approved spec.

@@ -89,3 +89,12 @@ node .claude/office/bin/office.mjs findings recur
 
 If a class has crossed the threshold, hand it to `office-janitor`. That defect
 should stop being your job.
+
+## Review against the spec
+
+For typed features, read `office-spec` and the approved overview. Relate each
+finding and supporting evidence to the task's criterion IDs. Assess the task's
+contribution to the full requirement, not just whether its commands exit zero.
+Use preservation semantics for refactors; an initially green characterization
+test is valid. Spec changes require renewed human confirmation and re-evaluation
+of affected work; do not reinterpret an approved requirement to accept a diff.

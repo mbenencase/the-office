@@ -24,7 +24,7 @@ flowchart TD
 
     JUDGE -->|harness| OM[Office Manager]
     JUDGE -->|feature| PO[Product Owner]
-    JUDGE -->|trivial| MIN[Minimal task file]
+    JUDGE -->|trivial| PO
 
     OM --> G3{{"GATE 3<br/>approve the harness change"}}
     G3 --> CTRL[("Controls installed<br/>harness.md updated")]
@@ -167,8 +167,9 @@ office findings recur       # defect classes that should become controls
 `dod:` is prose for the human. **`checks:` is the contract** — shell commands
 that must exit 0. `office validate` rejects an empty `checks:` list.
 
-A check must fail before the work and pass after. One that is already green on
-an untouched checkout verifies nothing.
+Regression checks should fail for the reproduced defect and pass after the fix.
+Refactor characterization checks preserve behavior and can pass before and after.
+Existing build, type, and lint gates may remain green.
 
 ## Verified task execution
 
@@ -323,3 +324,52 @@ so what gets published is exactly what CI is green on.
 
 The `packs` job matters most: those configs ship into other people's
 repositories, and before it existed nothing had ever executed them.
+
+## Typed specs from informal requests
+
+Users describe the problem or desired result in their own words. The Product Owner
+creates a typed `overview.md` using `office feature new <slug> --type bug|feature|refactor`.
+The default type is feature. Each template shares request, objective, exclusions,
+constraints, assumptions, and harness impact, plus sections specific to that work.
+Fill placeholder text; use explicit None / Not applicable with a reason where needed.
+
+The frontmatter contains `spec_version: 1`, the feature `id`, `type`, a requirements
+map (`REQ-001: description`), and an `acceptance_criteria` map whose `AC-001` entry
+contains `requirement: REQ-001` and a `description`. `open_questions` is a list.
+Every requirement needs a criterion; unresolved questions prevent approval.
+
+```bash
+office feature new orders-filter --type feature --title "Filter orders"
+# Product Owner fills overview.md from the request and repository evidence
+office spec validate orders-filter
+office spec status orders-filter
+# Show that exact content/hash to the human at Gate 1. After confirmation:
+office spec approve orders-filter --hash <shown-hash> --by <human-reference>
+# Planner creates tasks and fills their checks, scope, requirements and criteria
+office task new orders-filter --title "Implement filtering"
+office spec validate orders-filter --plan
+office validate
+# Gate 2, then the existing claim/check/scope/review/done cycle
+```
+
+Task `requirements` and `acceptance_criteria` lists reference feature-local IDs.
+Each task needs consistent references; the full plan must cover every criterion.
+`verification_mode` defaults to regression for bugs, acceptance for features, and
+preservation for refactors; choose the mode appropriate to each task's actual work.
+The CLI verifies structure and coverage, while the Reviewer judges the evidence.
+It does not prove semantic coverage or infer whether human confirmation occurred.
+
+Approval is a versioned `spec-approval.json` beside overview.md, tied to its entire
+normalized text hash. `spec status` reports draft, approved, or stale. All changes
+to the spec, including prose, require renewed confirmation. Active task evidence
+includes this hash and task references, so reapproval does not revive old checks.
+Keep plan iteration notes in tasks or optional design.md. Completed tasks remain
+historical: re-evaluate affected work and add correction tasks for changed criteria.
+
+Existing untyped overviews remain usable as legacy boards. Migration is explicit:
+replace overview.md with a filled typed template, link existing tasks to IDs and
+verification modes, validate the full plan, and obtain approval. A required spec
+cannot silently disappear or lose its schema marker. Existing task evidence may
+need fresh check/scope after upgrading. New feature scaffolding always uses specs.
+Templates are installed for both Claude and Cursor. No new runtime dependency,
+PR automation, or final feature-verification runner is introduced by this change.
