@@ -373,3 +373,27 @@ cannot silently disappear or lose its schema marker. Existing task evidence may
 need fresh check/scope after upgrading. New feature scaffolding always uses specs.
 Templates are installed for both Claude and Cursor. No new runtime dependency,
 PR automation, or final feature-verification runner is introduced by this change.
+
+## AWS infrastructure with Terraform
+
+The `office-aws-terraform` skill helps create AWS infrastructure and review security
+and estimated costs through the existing spec/task workflow. It follows existing
+Terraform roots, versions, modules, state and deployment conventions. It is installed
+with both Claude and Cursor; no AWS connection or extra scanner is installed.
+
+Example requests:
+
+- `/office Create Terraform for a private S3 bucket for application uploads, following our existing environment conventions. Review security and estimate storage/request costs before deployment.`
+- `/office Review the security and monthly cost drivers of our Terraform-managed API infrastructure. Report findings and assumptions; do not change the infrastructure.`
+- `/office Refactor the existing networking Terraform into modules without replacing resources. Show the plan and security/cost impact.`
+
+The skill produces reviewable HCL/plan evidence, scoped security findings and dated
+cost assumptions. Missing AWS/pricing access is recorded, and static work continues.
+It distinguishes a reviewable plan from authorized application and preserves any
+specific deployment authorization already supplied by the user.
+
+Its local plan-summary script inventories actions, replacements, moves, imports,
+drift and unknowns from `terraform show -json` output. It omits resource values but
+is not a security scanner, price engine, or deployment approval mechanism. Supporting
+references explain live versus offline checks, sensitive plan/state handling and
+Terraform detailed-exitcode normalization for office task checks.

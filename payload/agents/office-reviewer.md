@@ -98,3 +98,6 @@ contribution to the full requirement, not just whether its commands exit zero.
 Use preservation semantics for refactors; an initially green characterization
 test is valid. Spec changes require renewed human confirmation and re-evaluation
 of affected work; do not reinterpret an approved requirement to accept a diff.
+
+For AWS infrastructure expressed in Terraform, load `office-aws-terraform` for
+account/environment context, plan evidence, security review and cost assumptions.

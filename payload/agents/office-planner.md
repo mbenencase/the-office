@@ -71,3 +71,6 @@ overview requires renewed human confirmation.
 
 After `plan_iterations` (see `.the-office/config.yml`, default 3) without
 convergence, stop and escalate to the human with both positions stated.
+
+For AWS infrastructure expressed in Terraform, load `office-aws-terraform` for
+account/environment context, plan evidence, security review and cost assumptions.

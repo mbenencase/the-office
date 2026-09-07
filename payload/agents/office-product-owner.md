@@ -59,3 +59,6 @@ should be able to reply "yes" or correct one line.
 
 After explicit human confirmation, record approval with the exact shown hash
 and human reference using `office spec approve`. Never self-approve the spec.
+
+For AWS infrastructure expressed in Terraform, load `office-aws-terraform` for
+account/environment context, plan evidence, security review and cost assumptions.

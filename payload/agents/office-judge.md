@@ -53,3 +53,9 @@ spec_type: bug | feature | refactor
 reason: <one sentence>
 feature_slug: <kebab-case slug, only for trivial and feature>
 ```
+
+AWS resource provisioning and AWS security/cost review are infrastructure work,
+not automatically harness work. Load `office-aws-terraform` for Terraform requests.
+Route changes through the existing spec flow; a review-only request produces
+findings without implicitly authorizing remediation. Scanner/hook installation
+is a harness proposal.
