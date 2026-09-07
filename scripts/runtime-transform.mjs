@@ -30,7 +30,6 @@ if (!runtime || !kind || !src) {
 const READONLY_AGENTS = new Set([
   'office-judge',
   'office-devils-advocate',
-  'office-product-owner',
 ]);
 
 const raw = fs.readFileSync(src, 'utf8');

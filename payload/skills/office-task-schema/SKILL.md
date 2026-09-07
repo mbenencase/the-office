@@ -12,6 +12,10 @@ One task is one Markdown file at `.the-office/features/<feature>/task-NN.md`.
 id: auth-rework/task-01
 task_no: 1
 title: Rate-limit the login endpoint
+spec_required: true
+requirements: [REQ-001]
+acceptance_criteria: [AC-001]
+verification_mode: acceptance
 depends_on: []
 status: pending
 tier: standard
@@ -58,8 +62,9 @@ resolves through `.the-office/config.yml`, in one place.
 
 ## What makes `checks` real
 
-**A check must fail before the work and pass after.** If it is already green on
-an untouched checkout, it verifies nothing about this task.
+Use `verification_mode` to distinguish regression, acceptance, and preservation.
+Targeted regression tests should fail for the defect before the fix. Preservation
+checks should pass before and after. Existing build/type/lint gates can stay green.
 
 Weak checks, in descending order of how often they appear:
 
@@ -70,8 +75,8 @@ Weak checks, in descending order of how often they appear:
 - A `dod:` promising something no check touches at all.
 - `true`, or a command that cannot fail.
 
-A test suite command is a good check only when this task adds a test to it that
-did not exist before. Prefer naming the specific test:
+A test suite command must exercise relevant behavior; preservation work can use
+existing tests that cover the invariants. Prefer naming the specific test:
 `pytest tests/auth/test_ratelimit.py::test_burst_returns_429`.
 
 ## Scaffolding
@@ -97,3 +102,11 @@ under Git's `office-verification/` directory; never fill it manually.
 Use `office retry <id> --reason "..."` to return review findings to implementation.
 It increments attempts and blocks at the budget limit. A retry resumes the task;
 do not claim it again. Empty scope is rejected by `office scope`.
+
+## Spec-linked tasks
+
+New typed features require `spec_required: true`, `requirements: [REQ-001]`,
+`acceptance_criteria: [AC-001]`, and `verification_mode` (regression, acceptance,
+or preservation). IDs are local to the feature overview. Use the `office-spec`
+skill for the complete contract. The CLI rejects unknown or inconsistent IDs,
+criteria without task coverage, and execution against unapproved/stale specs.
