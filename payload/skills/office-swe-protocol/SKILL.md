@@ -105,3 +105,6 @@ $OFFICE block <id> --reason "<what is actually blocking, in one sentence>"
 
 Escalating is a correct outcome. Spending a fourth attempt on the same
 misunderstanding is not.
+
+For AWS Terraform tasks, load `office-aws-terraform`. Plan/check evidence is not
+deployment authorization; keep mutating cloud operations out of repeatable checks.

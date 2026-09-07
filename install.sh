@@ -164,7 +164,9 @@ install_cursor() {
   done
   for d in "$SRC"/payload/skills/*/; do
     skill="$(basename "${d%/}")"
-    mkdir -p "$CURSOR/skills/$skill"
+    # Copy supporting references/scripts as well as the transformed entrypoint.
+    rm -rf "$CURSOR/skills/$skill"
+    cp -R "${d%/}" "$CURSOR/skills/$skill"
     $TRANSFORM cursor skill "$d/SKILL.md" "$CURSOR/skills/$skill/SKILL.md"
     n=$((n+1))
   done
