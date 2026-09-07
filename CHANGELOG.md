@@ -14,6 +14,16 @@ instead; they become these notes verbatim.
 
 <!-- next-release -->
 
+## [0.3.0] — 2026-09-07
+
+### Added
+
+- **board-ui:** Tauri kanban for markdown task workflows (#5) (`29ccbbe`)
+
+### Fixed
+
+- enforce task lifecycle and commit-bound verification (`f2b259f`)
+
 ## [0.2.0] — 2026-08-28
 
 ### Added
@@ -70,3 +80,4 @@ every task in every repo with this installed. Both fixed with regression tests.
 
 [0.1.0]: https://github.com/mbenencase/the-office/releases/tag/v0.1.0
 [0.2.0]: https://github.com/mbenencase/the-office/releases/tag/v0.2.0
+[0.3.0]: https://github.com/mbenencase/the-office/releases/tag/v0.3.0
