@@ -23,7 +23,8 @@ flowchart TD
     REQ([Request]) --> JUDGE{Judge}
 
     JUDGE -->|harness| OM[Office Manager]
-    JUDGE -->|feature| PO[Product Owner]
+    JUDGE -->|kickoff| PO[Product Owner]
+    JUDGE -->|feature| PO
     JUDGE -->|trivial| PO
 
     OM --> G3{{"GATE 3<br/>approve the harness change"}}
@@ -34,6 +35,7 @@ flowchart TD
     PLAN --> DA["Devil's Advocate"]
     DA -->|"rejected — max 3 passes"| PLAN
     DA -->|approved| G2{{"GATE 2<br/>approve the board"}}
+    PLAN -->|"kickoff — one pass, no DA"| G2
 
     G2 --> NEXT
     MIN --> NEXT[/"office next — dependency ordered"/]
@@ -113,11 +115,15 @@ Use `--runtime both` to install into `.claude/` and `.cursor/` at once.
 Then, in that repo:
 
 ```
-/office-onboard          audit the harness and propose the controls it lacks
-/office <request>        run a request through the pipeline
-/office-board            show the board
-/office-next             execute the next ready task
+/office-onboard python       # or typescript, go, rust — Gate 3 on the catalog
+/office <request>            # first product request uses the kickoff route
+/office-board                show the board
+/office-next                 execute the next ready task
 ```
+
+Greenfield onboard is computational: `office propose` is the Gate 3 draft,
+`office bootstrap --apply` copies the pack. Archaeology waits for legacy repos
+and never blocks the first SWE.
 
 `--link` symlinks instead of copying, for iterating on the-office itself.
 `--runtime cursor` installs a Cursor Agent payload (`.cursor/agents/`,
@@ -128,8 +134,8 @@ Then, in that repo:
 
 | Role | Tier | Job |
 |---|---|---|
-| **Judge** | fast | Routes: trivial · feature · harness |
-| **Office Manager** | deep | Audits and installs the harness |
+| **Judge** | fast | Routes: trivial · kickoff · feature · harness |
+| **Office Manager** | standard | Audits and installs the harness via the CLI |
 | **Product Owner** | standard | Clarifies the request → **Gate 1** |
 | **Planner** | deep | Decomposes into tasks with executable checks |
 | **Devil's Advocate** | deep | Adversarial plan review → **Gate 2** |
@@ -156,7 +162,10 @@ office check <id>           # run the task's executable definition of done
 office scope <id>           # assert the diff stayed inside the task's globs
 office validate             # schema, duplicate ids, orphan deps, cycles
 office audit                # stacks, existing controls, harnessability score
+office propose --stack S    # Gate 3 draft from the catalog pack
+office bootstrap --stack S  # init + propose; add --apply after Gate 3
 office pack show <stack>    # controls in strangler order for a legacy repo
+office pack install <stack> # copy pack files; requires --apply
 office findings recur       # defect classes that should become controls
 ```
 

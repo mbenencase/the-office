@@ -179,6 +179,9 @@ Every command below is pure computation. No model is involved.
 | `office scope <id>` | Verify the working diff touches only `scope:` globs |
 | `office validate` | Schema-validate all tasks; detect cycles, dupes, orphan deps |
 | `office audit --json` | Detect stacks and existing sensors; emit machine-readable report |
+| `office propose [--json] [--stack S]` | Gate 3 draft from the pack catalogue (no archaeology) |
+| `office bootstrap --stack S [--apply]` | `init` + `propose`; `--apply` installs after Gate 3 |
+| `office pack install <stack> [--apply]` | Copy catalog files, merge GUIDE.md, write `harness.md` |
 | `office findings add` | Append a Reviewer finding to the ledger |
 | `office findings recur` | Report finding classes at or over the recurrence threshold |
 
@@ -192,8 +195,8 @@ default: only the SWE and Office Manager get write access.
 
 | Role | Tier | Writes? | Job |
 |---|---|---|---|
-| **Judge** | fast | no | Route: `trivial` → SWE · `feature` → PO · `harness` → Office Manager |
-| **Office Manager** | deep | yes | Bootstrap/repair the harness. The role the spec was missing. |
+| **Judge** | fast | no | Route: `trivial` · `kickoff` · `feature` · `harness` |
+| **Office Manager** | standard | yes | Bootstrap/repair the harness via the CLI. Archaeology is legacy-only and off the critical path. |
 | **Product Owner** | standard | no | Clarify intent. **Gate 1.** |
 | **Planner** | deep | board only | Decompose into tasks with executable checks |
 | **Devil's Advocate** | deep | no | Adversarial plan review. ≤3 loops, then **Gate 2.** |
@@ -203,29 +206,32 @@ default: only the SWE and Office Manager get write access.
 
 ### 7.1 Judge
 
-Three outcomes, not two. The spec's binary miss: a request like "our tests are
-flaky" is neither a feature nor a trivial edit — it is a harness problem.
+Four outcomes. The spec's binary miss: a request like "our tests are flaky" is
+neither a feature nor a trivial edit — it is a harness problem. The fourth
+route, `kickoff`, is the first product slice after onboard (`kickoff_eligible`
+in `office audit --json`): Product Owner + Gate 1, Planner one pass, Gate 2, no
+Devil's Advocate. Later features take the full plan loop.
 
 The `trivial` path still writes a minimal task file. Without one, small changes
 bypass `checks` entirely, and that is exactly where regressions hide.
 
 ### 7.2 Office Manager — the bootstrap role
 
-Runs on `/office-onboard`, or when the Judge routes a harness request.
+Runs on `/office-onboard <stack>`, or when the Judge routes a harness request.
 
 1. `office audit --json` — computational: detect stacks, package managers, test
-   runners, existing linters/hooks/CI, type-checker strictness, coverage config.
-2. **Archaeology** (inferential): module boundaries, implicit conventions,
-   invariants that exist only in reviewers' heads.
-3. **Score harnessability** — typing strength, boundary clarity, test presence,
-   build reproducibility. Greenfield repos get controls embedded from day one;
-   legacy repos get a prioritised retrofit sequence.
-4. **Propose** a harness manifest: which controls to add, which cell of the
-   guides/sensors matrix each occupies, and cost/benefit for each.
-5. **GATE 3** — nothing installs without approval. A new pre-commit hook changes
+   runners, existing linters/hooks/CI, type-checker strictness, coverage config,
+   `kickoff_eligible`.
+2. `office propose --json` — the Gate 3 draft from the pack catalogue. Greenfield
+   gets the full pack; legacy gets the cheap strangler prefix. No archaeology.
+3. **GATE 3** — nothing installs without approval. A new pre-commit hook changes
    every contributor's workflow.
-6. **Install** from the matching pack, write `.the-office/harness.md`, and
-   generate/extend the repo's `CLAUDE.md` (the inferential guide layer).
+4. `office bootstrap --stack S --apply` — copies pack files, writes
+   `.the-office/harness.md`, appends `GUIDE.md` into `CLAUDE.md` inside markers.
+5. Product work may start. On greenfield, skip archaeology entirely. On legacy,
+   archaeology is a **second** Gate 3 after the first `/office` may already have
+   started: module boundaries, implicit conventions, invariants that exist only
+   in reviewers' heads.
 
 Legacy repos get an explicit **strangler ordering**: cheap high-signal sensors
 first (formatter, type check on changed files only), broad enforcement last.
@@ -315,8 +321,9 @@ build any remaining work through its own pipeline.
 ## 9. Known risks
 
 **Ceremony cost.** Seven roles on a small change is absurd. Mitigated by the
-Judge's `trivial` path — but the Judge's calibration is the thing most likely to
-need tuning after real use.
+Judge's `trivial` path and by `kickoff` on the first product slice after onboard
+— but the Judge's calibration is the thing most likely to need tuning after real
+use.
 
 **Gate fatigue.** Three gates per feature. If they become reflexive approvals they
 provide nothing. Gate 3 (harness changes) is the one that must stay hard.

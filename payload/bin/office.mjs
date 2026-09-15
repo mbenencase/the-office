@@ -265,6 +265,14 @@ function die(msg, code = 1) {
   process.exit(code);
 }
 
+function argFlag(argv, name, fallback = null) {
+  const i = argv.indexOf(name);
+  if (i < 0) return fallback;
+  const v = argv[i + 1];
+  if (v === undefined || String(v).startsWith('-')) die(`${name} requires a value`);
+  return v;
+}
+
 function table(headers, rows) {
   const all = [headers, ...rows];
   const w = headers.map((_, i) => Math.max(...all.map((r) => String(r[i] ?? '').length)));
@@ -509,25 +517,9 @@ function reasonArg(argv) {
 
 const cmds = {};
 
-cmds.init = (argv) => {
-  const root = findRoot() ?? process.cwd();
-  const dir = path.join(root, '.the-office');
-  if (fs.existsSync(dir) && !argv.includes('--force')) {
-    // Say where it found the board. Resolving upward is correct — nested boards
-    // would be worse — but silently targeting an ancestor is confusing enough
-    // that it cost a CI debugging cycle.
-    const here = path.resolve(root) === path.resolve(process.cwd());
-    die(here
-      ? `.the-office/ already exists here. Pass --force to overwrite config.`
-      : `.the-office/ already exists in a parent directory: ${root}\n`
-        + `You are in ${process.cwd()}.\n`
-        + `office resolves the board by walking up, so this repo already has one. `
-        + `cd there to work on it, or --force to overwrite that config.`);
-  }
-  fs.mkdirSync(path.join(dir, 'features'), { recursive: true });
-  const cfg = path.join(dir, 'config.yml');
-  if (!fs.existsSync(cfg) || argv.includes('--force')) {
-    fs.writeFileSync(cfg, `version: ${VERSION}
+function configYaml(stacks) {
+  const rendered = stacks.length ? `[${stacks.join(', ')}]` : '[]';
+  return `version: ${VERSION}
 
 # Model tiers. Task files reference the tier, never a model id, so a model
 # release does not invalidate every task on the board.
@@ -551,14 +543,65 @@ gates:
 janitor:
   recurrence_threshold: 3
 
-# Populated by \`office audit\`.
-stacks: []
-`);
+# Populated by office init --stack / office bootstrap.
+stacks: ${rendered}
+`;
+}
+
+function setConfigStacks(root, stacks) {
+  const p = path.join(root, '.the-office', 'config.yml');
+  if (!fs.existsSync(p)) die('no .the-office/config.yml; run office init first.');
+  let text = fs.readFileSync(p, 'utf8');
+  const rendered = stacks.length ? `stacks: [${stacks.join(', ')}]` : 'stacks: []';
+  if (/^stacks:/m.test(text)) {
+    text = text.replace(/^stacks:\s*(?:\[[^\]]*\]|[^\n]*)?(?:\n(?:  - [^\n]*)+)?/m, rendered);
+  } else {
+    if (!text.endsWith('\n')) text += '\n';
+    text += `${rendered}\n`;
+  }
+  fs.writeFileSync(p, text);
+}
+
+function addConfigStacks(root, stacks) {
+  const cur = (loadConfig(root).stacks ?? []).map(String);
+  setConfigStacks(root, [...new Set([...cur, ...stacks])]);
+}
+
+cmds.init = (argv) => {
+  const cwd = process.cwd();
+  const root = findRoot() ?? cwd;
+  const dir = path.join(root, '.the-office');
+  const stackFlag = argFlag(argv, '--stack');
+  const stacks = stackFlag ? [requireStack(stackFlag)] : [];
+  if (fs.existsSync(dir) && !argv.includes('--force')) {
+    // Say where it found the board. Resolving upward is correct — nested boards
+    // would be worse — but silently targeting an ancestor is confusing enough
+    // that it cost a CI debugging cycle.
+    const here = path.resolve(root) === path.resolve(cwd);
+    if (!here) {
+      die(`.the-office/ already exists in a parent directory: ${root}\n`
+        + `You are in ${cwd}.\n`
+        + `office resolves the board by walking up, so this repo already has one. `
+        + `cd there to work on it, or --force to overwrite that config.`);
+    }
+    if (stacks.length) addConfigStacks(root, stacks);
+    console.log(`${c.green('already initialised')} ${path.relative(cwd, dir) || '.the-office'}/`);
+    if (stacks.length) console.log(c.dim(`stacks: ${(loadConfig(root).stacks ?? []).join(', ')}`));
+    console.log(c.dim('next: office propose --json   or   /office-onboard <stack>'));
+    return;
+  }
+  fs.mkdirSync(path.join(dir, 'features'), { recursive: true });
+  const cfg = path.join(dir, 'config.yml');
+  if (!fs.existsSync(cfg) || argv.includes('--force')) {
+    fs.writeFileSync(cfg, configYaml(stacks));
+  } else if (stacks.length) {
+    addConfigStacks(root, stacks);
   }
   const findings = path.join(dir, 'findings.jsonl');
   if (!fs.existsSync(findings)) fs.writeFileSync(findings, '');
-  console.log(`${c.green('initialised')} ${path.relative(process.cwd(), dir) || '.the-office'}/`);
-  console.log(c.dim('next: run /office-onboard to audit the repo and propose a harness.'));
+  console.log(`${c.green('initialised')} ${path.relative(cwd, dir) || '.the-office'}/`);
+  if (stacks.length) console.log(c.dim(`stacks: ${stacks.join(', ')}`));
+  console.log(c.dim('next: office propose --json   or   /office-onboard <stack>'));
 };
 
 cmds.board = (argv) => {
@@ -876,6 +919,51 @@ function walk(root, maxDepth) {
   return out;
 }
 
+function detectStacks(root) {
+  return Object.entries(STACK_MARKERS)
+    .filter(([, markers]) => markers.some((m) => fs.existsSync(path.join(root, m))))
+    .map(([s]) => s);
+}
+
+function classifyRepo(root) {
+  const commits = git(root, ['rev-list', '--count', 'HEAD']) ?? '0';
+  return (commits === '0' || walk(root, 3).length < 20) ? 'greenfield' : 'legacy';
+}
+
+function collectSensors(root, stacks) {
+  const sensors = [];
+  for (const s of stacks) {
+    for (const p of SENSOR_PROBES[s] ?? []) {
+      sensors.push({ stack: s, id: p.id, label: p.label, present: probe(root, p) });
+    }
+  }
+  for (const p of UNIVERSAL_PROBES) {
+    sensors.push({ stack: 'universal', id: p.id, label: p.label, present: probe(root, p) });
+  }
+  return sensors;
+}
+
+function runAudit(root, stacksOverride) {
+  const detected = detectStacks(root);
+  const stacks = (stacksOverride && stacksOverride.length) ? stacksOverride : detected;
+  const sensors = collectSensors(root, stacks);
+  const score = scoreHarnessability(root, stacks, sensors);
+  const harnessMd = fs.existsSync(path.join(root, '.the-office', 'harness.md'));
+  const completed = fs.existsSync(path.join(root, '.the-office'))
+    && loadTasks(root).some((t) => t.data.status === 'completed');
+  return {
+    version: VERSION,
+    root,
+    class: classifyRepo(root),
+    stacks,
+    detected,
+    harnessability: score,
+    sensors,
+    missing: sensors.filter((s) => !s.present).map((s) => `${s.stack}:${s.id}`),
+    kickoff_eligible: harnessMd && !completed,
+  };
+}
+
 function scoreHarnessability(root, stacks, sensors) {
   const has = (rel) => fs.existsSync(path.join(root, rel));
   const present = new Set(sensors.filter((s) => s.present).map((s) => s.id));
@@ -911,45 +999,26 @@ function scoreHarnessability(root, stacks, sensors) {
 
 cmds.audit = (argv) => {
   const root = findRoot() ?? process.cwd();
-  const stacks = Object.entries(STACK_MARKERS)
-    .filter(([, markers]) => markers.some((m) => fs.existsSync(path.join(root, m))))
-    .map(([s]) => s);
-
-  // package.json without tsconfig is JS, not TS — still the typescript pack.
-  const sensors = [];
-  for (const s of stacks) {
-    for (const p of SENSOR_PROBES[s] ?? []) {
-      sensors.push({ stack: s, id: p.id, label: p.label, present: probe(root, p) });
-    }
-  }
-  for (const p of UNIVERSAL_PROBES) {
-    sensors.push({ stack: 'universal', id: p.id, label: p.label, present: probe(root, p) });
-  }
-
-  const score = scoreHarnessability(root, stacks, sensors);
-  const isGreenfield = (git(root, ['rev-list', '--count', 'HEAD']) ?? '0') === '0' || walk(root, 3).length < 20;
-
-  const report = {
-    version: VERSION,
-    root,
-    class: isGreenfield ? 'greenfield' : 'legacy',
-    stacks,
-    harnessability: score,
-    sensors,
-    missing: sensors.filter((s) => !s.present).map((s) => `${s.stack}:${s.id}`),
-  };
+  const extra = argFlag(argv, '--stack');
+  const report = runAudit(root, extra ? [requireStack(extra)] : undefined);
 
   if (argv.includes('--json')) { console.log(JSON.stringify(report, null, 2)); return; }
 
+  const { harnessability: score, stacks, sensors } = report;
   console.log(`\n${c.bold('harness audit')}  ${c.dim(root)}`);
   console.log(`${c.dim('class')}    ${report.class}`);
   console.log(`${c.dim('stacks')}   ${stacks.join(', ') || c.yellow('none detected')}`);
   console.log(`${c.dim('score')}    ${score.total}/100 (${score.band})`);
   console.log(c.dim(`         typing ${score.components.typing}/25  boundaries ${score.components.boundaries}/20  tests ${score.components.tests}/25  build ${score.components.build}/15  controls ${score.components.controls}/15`));
+  console.log(`${c.dim('kickoff')}  ${report.kickoff_eligible ? 'eligible (harness.md present, no completed tasks)' : 'no'}`);
   console.log('');
   table(['', 'STACK', 'CONTROL', 'DETECTED AS'],
     sensors.map((s) => [s.present ? c.green('x') : c.red('·'), s.stack, s.id, s.label]));
-  console.log(`\n${c.dim('This is the computational half only. Boundary and convention findings need the Office Manager.')}`);
+  if (report.class === 'greenfield') {
+    console.log(`\n${c.dim('Greenfield: skip archaeology. Next: office propose --json  (pass --stack if none detected).')}`);
+  } else {
+    console.log(`\n${c.dim('This is the computational half only. Boundary and convention findings need the Office Manager, after the cheap prefix is installed.')}`);
+  }
 };
 
 /* ------------------------------------------------------------------ *
@@ -973,6 +1042,279 @@ function loadPack(stack) {
   const p = path.join(dir, stack, 'pack.json');
   if (!fs.existsSync(p)) die(`no pack for stack "${stack}". Available: ${fs.readdirSync(dir).join(', ')}`);
   return { ...JSON.parse(fs.readFileSync(p, 'utf8')), dir: path.join(dir, stack) };
+}
+
+function availableStacks() {
+  const dir = packsDir();
+  if (!dir) return [];
+  return fs.readdirSync(dir).filter((d) => fs.existsSync(path.join(dir, d, 'pack.json'))).sort();
+}
+
+function requireStack(name) {
+  const all = availableStacks();
+  if (!all.includes(name)) die(`no pack for stack "${name}". Available: ${all.join(', ') || '(none)'}`);
+  return name;
+}
+
+function templatesDir() {
+  for (const rel of ['../templates', '../../templates']) {
+    const d = path.resolve(HERE, rel);
+    if (fs.existsSync(d)) return d;
+  }
+  return null;
+}
+
+const CHEAP_IDS = new Set(['guides', 'formatter', 'linter', 'vet']);
+
+function orderedControls(pack) {
+  return [...pack.controls].sort((a, b) => (a.legacy_order ?? 99) - (b.legacy_order ?? 99));
+}
+
+function cheapControls(pack) {
+  return orderedControls(pack).filter((k) => CHEAP_IDS.has(k.id));
+}
+
+function parseControlIds(argv, pack) {
+  const raw = argFlag(argv, '--controls');
+  if (!raw) return null;
+  const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const known = new Set(pack.controls.map((c) => c.id));
+  for (const id of ids) {
+    if (!known.has(id)) die(`unknown control "${id}" in ${pack.stack} pack. Known: ${[...known].join(', ')}`);
+  }
+  return ids;
+}
+
+function resolveStacks(root, argv) {
+  const explicit = argFlag(argv, '--stack');
+  if (explicit) return [requireStack(explicit)];
+  const detected = detectStacks(root);
+  if (detected.length) return detected;
+  if (fs.existsSync(path.join(root, '.the-office'))) {
+    const cfg = (loadConfig(root).stacks ?? []).map(String).filter(Boolean);
+    if (cfg.length) return cfg.map(requireStack);
+  }
+  return [];
+}
+
+function guideMarkers(stack) {
+  return {
+    start: `<!-- the-office:${stack}-guide -->`,
+    end: `<!-- /the-office:${stack}-guide -->`,
+  };
+}
+
+function mergeGuideInto(file, stack, guideBody) {
+  const { start, end } = guideMarkers(stack);
+  const block = `${start}\n${guideBody.trimEnd()}\n${end}\n`;
+  let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  const si = text.indexOf(start);
+  const ei = text.indexOf(end);
+  if (si !== -1 && ei !== -1 && ei > si) {
+    const after = ei + end.length;
+    const rest = text.slice(after).replace(/^\n/, '');
+    text = `${text.slice(0, si)}${block}${rest}`;
+  } else {
+    if (text && !text.endsWith('\n')) text += '\n';
+    if (text) text += '\n';
+    text += block;
+  }
+  fs.writeFileSync(file, text);
+}
+
+function escapeTableCell(s) {
+  return String(s).replace(/\|/g, '\\|');
+}
+
+function writeHarnessMd(root, report, installed, deferred) {
+  const dir = templatesDir();
+  if (!dir) die('no templates directory found next to office.mjs.');
+  let text = fs.readFileSync(path.join(dir, 'harness.md.tmpl'), 'utf8');
+  const h = report.harnessability;
+  const today = new Date().toISOString().slice(0, 10);
+  const replacements = {
+    '{{CLASS}}': report.class,
+    '{{STACKS}}': report.stacks.join(', ') || 'none',
+    '{{SCORE}}': String(h.total),
+    '{{BAND}}': h.band,
+    '{{DATE}}': today,
+    '{{TYPING}}': String(h.components.typing),
+    '{{BOUNDARIES}}': String(h.components.boundaries),
+    '{{TESTS}}': String(h.components.tests),
+    '{{BUILD}}': String(h.components.build),
+    '{{CONTROLS}}': String(h.components.controls),
+  };
+  for (const [k, v] of Object.entries(replacements)) text = text.replaceAll(k, v);
+
+  const rows = installed.length
+    ? installed.map((c) => `| ${escapeTableCell(c.label || c.id)} | ${c.cell} | ${c.check ? `\`${escapeTableCell(c.check)}\`` : '—'} | catalog |`).join('\n')
+    : '| — | — | — | none yet |';
+  text = text.replace(
+    '| Control | Cell | Check command | Installed |\n|---|---|---|---|',
+    `| Control | Cell | Check command | Installed |\n|---|---|---|---|\n${rows}`,
+  );
+
+  const gaps = [];
+  for (const c of deferred) {
+    const why = c.id === 'coverage'
+      ? 'medir na primeira execução; pin the floor to the current value before enforcing'
+      : 'deferred past the cheap strangler prefix; install after the first product slice';
+    gaps.push(`| ${escapeTableCell(c.label || c.id)} | ${c.cost} | ${why} |`);
+  }
+  const gapRows = gaps.length ? gaps.join('\n') : '| — | — | none — catalog pack installed at full strength |';
+  text = text.replace(
+    '| Gap | Cost | Why not yet |\n|---|---|---|',
+    `| Gap | Cost | Why not yet |\n|---|---|---|\n${gapRows}`,
+  );
+
+  if (report.class === 'legacy' && [...installed, ...deferred].length) {
+    const order = [...installed, ...deferred].map((c, i) => `${i}. ${c.id}`).join('\n');
+    text = text.replace('## Adoption order\n', `## Adoption order\n\n${order}\n`);
+  }
+
+  fs.mkdirSync(path.join(root, '.the-office'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.the-office', 'harness.md'), text);
+}
+
+function filePlanForControl(root, pack, control) {
+  const out = [];
+  for (const f of control.files ?? []) {
+    if (control.id === 'guides' && f === 'GUIDE.md') {
+      out.push({ dest: 'CLAUDE.md', action: 'merge', src: path.join(pack.dir, f) });
+      if (fs.existsSync(path.join(root, 'AGENTS.md'))) {
+        out.push({ dest: 'AGENTS.md', action: 'merge', src: path.join(pack.dir, f) });
+      }
+      continue;
+    }
+    const dest = path.join(root, f);
+    const src = path.join(pack.dir, f);
+    let action = 'copy';
+    if (fs.existsSync(dest)) {
+      const same = fs.readFileSync(dest).equals(fs.readFileSync(src));
+      action = same ? 'skip' : 'overwrite';
+    }
+    out.push({ dest: f, action, src });
+  }
+  return out;
+}
+
+function dedupeFiles(files) {
+  const rank = { merge: 0, skip: 1, copy: 2, overwrite: 3 };
+  const seen = new Map();
+  for (const f of files) {
+    const prev = seen.get(f.dest);
+    if (!prev || (rank[f.action] ?? 0) > (rank[prev.action] ?? 0)) seen.set(f.dest, f);
+  }
+  return [...seen.values()];
+}
+
+function buildProposal(root, argv) {
+  const stacks = resolveStacks(root, argv);
+  if (!stacks.length) {
+    die('no stack detected. Pass --stack python|typescript|go|rust (greenfield repos have no markers yet).');
+  }
+  const report = runAudit(root, stacks);
+  const stacksOut = [];
+  for (const stack of stacks) {
+    const pack = loadPack(stack);
+    const ordered = orderedControls(pack);
+    const selectedIds = parseControlIds(argv, pack);
+    let proposed;
+    if (selectedIds) proposed = ordered.filter((k) => selectedIds.includes(k.id));
+    else if (report.class === 'greenfield') proposed = ordered;
+    else proposed = cheapControls(pack);
+    const proposedIds = new Set(proposed.map((k) => k.id));
+    const deferred = ordered.filter((k) => !proposedIds.has(k.id));
+    const files = dedupeFiles(proposed.flatMap((k) => filePlanForControl(root, pack, k)));
+    stacksOut.push({ stack, proposed, deferred, files, pack });
+  }
+  return { report, stacks: stacksOut };
+}
+
+function printProposal(proposal, argv) {
+  const { report, stacks } = proposal;
+  if (argv.includes('--json')) {
+    console.log(JSON.stringify({
+      class: report.class,
+      stacks: report.stacks,
+      kickoff_eligible: report.kickoff_eligible,
+      proposed: stacks.flatMap((s) => s.proposed.map((c) => ({
+        stack: s.stack, id: c.id, label: c.label, cell: c.cell, cost: c.cost, check: c.check ?? null, files: c.files ?? [],
+      }))),
+      deferred: stacks.flatMap((s) => s.deferred.map((c) => ({
+        stack: s.stack, id: c.id, label: c.label, cell: c.cell, cost: c.cost,
+      }))),
+      files: stacks.flatMap((s) => s.files.map((f) => ({ stack: s.stack, dest: f.dest, action: f.action }))),
+      apply: `office bootstrap --stack ${report.stacks[0]} --apply`,
+    }, null, 2));
+    return;
+  }
+  console.log(`\n${c.bold('harness proposal')}  ${report.class}  ${c.dim(`stacks: ${report.stacks.join(', ')}`)}`);
+  for (const s of stacks) {
+    console.log(`\n${c.bold(s.stack)} ${c.dim(report.class === 'greenfield' ? 'full pack' : 'cheap strangler prefix')}`);
+    table(['#', 'CONTROL', 'CELL', 'COST', 'CHECK'],
+      s.proposed.map((k, i) => [i, k.id, k.cell.replace('computational-', 'comp-').replace('inferential-', 'inf-'), k.cost, k.check ?? '-']));
+    if (s.deferred.length) {
+      console.log(c.dim(`\ndeferred: ${s.deferred.map((k) => k.id).join(', ')}`));
+    }
+    console.log('');
+    for (const f of s.files) {
+      console.log(`  ${f.action.padEnd(9)} ${f.dest}`);
+    }
+  }
+  console.log(`\n${c.dim('Gate 3: approve this list, then: office bootstrap --stack ' + report.stacks[0] + ' --apply')}`);
+}
+
+function installPack(root, stack, argv) {
+  const pack = loadPack(stack);
+  const report = runAudit(root, [stack]);
+  const selectedIds = parseControlIds(argv, pack);
+  const ordered = orderedControls(pack);
+  let proposed;
+  if (selectedIds) proposed = ordered.filter((k) => selectedIds.includes(k.id));
+  else if (report.class === 'greenfield') proposed = ordered;
+  else proposed = cheapControls(pack);
+  const proposedIds = new Set(proposed.map((k) => k.id));
+  const deferred = ordered.filter((k) => !proposedIds.has(k.id));
+  const files = dedupeFiles(proposed.flatMap((k) => filePlanForControl(root, pack, k)));
+  const apply = argv.includes('--apply');
+  const dry = argv.includes('--dry-run') || !apply;
+  if (argv.includes('--apply') && argv.includes('--dry-run')) die('pass either --apply or --dry-run, not both.');
+  const force = argv.includes('--force');
+
+  if (dry) {
+    console.log(`${c.dim('dry-run')} pack install ${stack} (${proposed.map((k) => k.id).join(', ') || 'nothing'})`);
+    for (const f of files) console.log(`  ${f.action.padEnd(9)} ${f.dest}`);
+    console.log(c.dim('nothing written. Pass --apply after Gate 3.'));
+    return { written: false, proposed, deferred };
+  }
+
+  const conflicts = files.filter((f) => f.action === 'overwrite');
+  if (conflicts.length && !force) {
+    die(`refusing to overwrite ${conflicts.map((f) => f.dest).join(', ')}. Pass --force, or restore the pack file.`);
+  }
+
+  for (const f of files) {
+    if (f.action === 'merge') {
+      mergeGuideInto(path.join(root, f.dest), stack, fs.readFileSync(f.src, 'utf8'));
+    } else if (f.action === 'skip') {
+      continue;
+    } else {
+      fs.mkdirSync(path.dirname(path.join(root, f.dest)), { recursive: true });
+      fs.copyFileSync(f.src, path.join(root, f.dest));
+    }
+  }
+
+  addConfigStacks(root, [stack]);
+  const after = runAudit(root, [stack]);
+  writeHarnessMd(root, after, proposed, deferred);
+  console.log(`${c.green('installed')} ${stack} pack (${proposed.map((k) => k.id).join(', ')})`);
+  for (const f of files) {
+    const done = f.action === 'overwrite' && force ? 'copied' : f.action === 'skip' ? 'kept' : f.action === 'merge' ? 'merged' : 'copied';
+    console.log(`  ${done.padEnd(9)} ${f.dest}`);
+  }
+  console.log(`${c.green('wrote')} .the-office/harness.md`);
+  return { written: true, proposed, deferred };
 }
 
 cmds.pack = (argv) => {
@@ -1021,7 +1363,43 @@ cmds.pack = (argv) => {
     return;
   }
 
-  die(`unknown subcommand "${sub}". Try: list, show, files.`);
+  if (sub === 'install') {
+    const stack = argv[1] ?? die('usage: office pack install <stack> [--controls id,...] [--dry-run] [--force] [--apply]');
+    requireStack(stack);
+    const root = findRoot() ?? process.cwd();
+    if (!fs.existsSync(path.join(root, '.the-office'))) {
+      die('no .the-office/; run office init --stack ' + stack + ' first, or office bootstrap --stack ' + stack + '.');
+    }
+    installPack(root, stack, argv.slice(2));
+    return;
+  }
+
+  die(`unknown subcommand "${sub}". Try: list, show, files, install.`);
+};
+
+cmds.propose = (argv) => {
+  const root = findRoot() ?? process.cwd();
+  printProposal(buildProposal(root, argv), argv);
+};
+
+cmds.bootstrap = (argv) => {
+  const cwd = process.cwd();
+  let root = findRoot() ?? cwd;
+  const stack = argFlag(argv, '--stack') ?? resolveStacks(root, argv)[0];
+  if (!stack) die('usage: office bootstrap --stack <python|typescript|go|rust> [--apply] [--force] [--controls id,...]');
+  requireStack(stack);
+  if (!fs.existsSync(path.join(cwd, '.the-office')) && path.resolve(root) !== path.resolve(cwd)) {
+    die(`.the-office/ already exists in a parent directory: ${root}\ncd there, or run office init --force in ${cwd}.`);
+  }
+  if (!fs.existsSync(path.join(root, '.the-office'))) {
+    cmds.init(['--stack', stack]);
+    root = cwd;
+  } else {
+    addConfigStacks(root, [stack]);
+  }
+  const proposal = buildProposal(root, argv);
+  printProposal(proposal, argv);
+  if (argv.includes('--apply')) installPack(root, stack, argv);
 };
 
 /* ------------------------------------------------------------------ *
@@ -1177,7 +1555,7 @@ cmds.help = () => {
   console.log(`${c.bold('office')} ${c.dim(VERSION)} — deterministic core for the-office
 
 ${c.dim('board')}
-  init [--force]              scaffold .the-office/ in this repo
+  init [--force] [--stack S]  scaffold .the-office/ in this repo
   board [feature]             render the kanban
   next                        print the next ready task id (exit 1 if none)
   validate                    schema, duplicate ids, orphan deps, cycles
@@ -1194,10 +1572,13 @@ ${c.dim('verification')}
   scope <id>                  assert base-to-working-tree diff stays inside scope globs
 
 ${c.dim('harness')}
-  audit [--json]              detect stacks, existing controls, harnessability
+  audit [--json] [--stack S]  detect stacks, existing controls, harnessability
+  propose [--json] [--stack S]  Gate 3 draft from the catalog (no archaeology)
+  bootstrap --stack S [--apply] init + propose; --apply installs after Gate 3
   pack list                   available sensor packs
   pack show <stack>           controls in strangler order, with install notes
   pack files <stack> [ctrl]   absolute paths of the files a control installs
+  pack install <stack> [--apply] [--dry-run] [--force] [--controls id,...]
   findings add --class <slug> --task <id> [--lens L] [--note "..."]
   findings recur              classes at or over the recurrence threshold
   findings list               the whole ledger

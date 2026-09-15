@@ -24,6 +24,8 @@ than reasoning about board state from file contents:
 ```bash
 OFFICE="node .claude/office/bin/office.mjs"
 $OFFICE help
+$OFFICE propose --json --stack python   # Gate 3 draft; no archaeology
+$OFFICE bootstrap --stack python --apply  # after Gate 3 only
 ```
 
 If a question can be answered by the CLI, it is not a question for a model.
@@ -33,7 +35,10 @@ If a question can be answered by the CLI, it is not a question for a model.
 ```
 request
   └─ office-judge ──┬─ harness  → office-manager ─────────────────── GATE 3
+                    │               (propose/bootstrap CLI; --apply after approval)
                     ├─ trivial  → PO + compact spec → GATE 1 → linked fast task
+                    ├─ kickoff  → office-product-owner ── GATE 1
+                    │                └─ office-planner (one pass, 1–3 tasks, no DA) GATE 2
                     └─ feature  → office-product-owner ── GATE 1
                                      └─ office-planner ⇄ office-devils-advocate
                                             (≤ plan_iterations)     GATE 2
@@ -43,6 +48,9 @@ request
                                      (≤ review_iterations)
                                              └─ recurrence → office-janitor → GATE 3
 ```
+
+`kickoff` is the first product slice after onboard (`audit --json` reports
+`kickoff_eligible: true`). Later requests are `feature` or `trivial`.
 
 Pick the SWE variant from the task's `tier:` field — `fast` → `office-swe-fast`,
 `standard` → `office-swe`, `deep` → `office-swe-deep`. That is what makes `tier`
@@ -56,11 +64,15 @@ Read them from `.the-office/config.yml`; all default to on.
 stops. A misunderstanding caught here costs one message; the same one caught
 after the plan converges costs the whole plan.
 
-**Gate 2 — after the plan converges.** Planner and Devil's Advocate iterate
-unattended, then stop and show the board before any code is written.
+**Gate 2 — after the plan converges.** On a `feature` route, Planner and Devil's
+Advocate iterate unattended, then stop and show the board before any code is
+written. On a `kickoff` route the Planner writes 1–3 tracer-bullet tasks in one
+pass, skips the DA loop, and stops here anyway.
 
-**Gate 3 — before any harness change.** Nothing installs without approval. A new
-hook changes every contributor's workflow, not just the agent's.
+**Gate 3 — before any harness change.** Nothing installs without approval. Catalog
+packs install through `office bootstrap --apply` / `office pack install --apply`,
+never by copying files by hand. A new hook changes every contributor's workflow,
+not just the agent's.
 
 Gate 3 is the one worth defending. If the other two decay into reflexive
 approvals they cost a little time; if Gate 3 does, the repo acquires controls

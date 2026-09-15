@@ -68,6 +68,50 @@ echo "audit — computational harness assessment"
 expect_exit 0 "audits a repo with no harness"  "$ROOT/tests/fixtures/good" audit --json
 expect_match "harnessability" "reports a score" "$ROOT/tests/fixtures/good" audit --json
 expect_match "\"class\"" "classifies greenfield vs legacy" "$ROOT/tests/fixtures/good" audit --json
+expect_match "kickoff_eligible" "reports kickoff eligibility" "$ROOT/tests/fixtures/good" audit --json
+
+echo
+echo "bootstrap — computational catalog install"
+BOOT=$(mktemp -d)
+(cd "$BOOT" && $OFFICE init --stack python >/dev/null)
+expect_match '"formatter"' "propose lists formatter" "$BOOT" propose --json
+expect_match '"class": "greenfield"' "propose classifies greenfield" "$BOOT" propose --json
+expect_match '"id": "guides"' "propose lists guides first" "$BOOT" propose --json
+(cd "$BOOT" && $OFFICE pack install python --dry-run >/dev/null)
+if [ ! -f "$BOOT/ruff.toml" ]; then ok "dry-run writes nothing"
+else bad "dry-run writes nothing" "ruff.toml appeared without --apply"; fi
+(cd "$BOOT" && $OFFICE pack install python --apply >/dev/null)
+if [ -f "$BOOT/ruff.toml" ] && [ -f "$BOOT/mypy.ini" ]; then ok "apply copies pack files"
+else bad "apply copies pack files"; fi
+if grep -q '<!-- the-office:python-guide -->' "$BOOT/CLAUDE.md"; then ok "apply merges GUIDE.md into CLAUDE.md"
+else bad "apply merges GUIDE.md into CLAUDE.md"; fi
+if grep -q 'ruff format' "$BOOT/.the-office/harness.md"; then ok "apply writes harness.md control rows"
+else bad "apply writes harness.md control rows"; fi
+if grep -q 'stacks: \[python\]' "$BOOT/.the-office/config.yml"; then ok "apply records stacks in config.yml"
+else bad "apply records stacks in config.yml"; fi
+expect_match '"kickoff_eligible": true' "kickoff eligible after harness.md" "$BOOT" audit --json --stack python
+GUIDE_START=$(grep -c '<!-- the-office:python-guide -->' "$BOOT/CLAUDE.md" || true)
+(cd "$BOOT" && $OFFICE bootstrap --stack python --apply >/dev/null)
+GUIDE_AGAIN=$(grep -c '<!-- the-office:python-guide -->' "$BOOT/CLAUDE.md" || true)
+if [ "$GUIDE_START" -eq 1 ] && [ "$GUIDE_AGAIN" -eq 1 ]; then ok "bootstrap --apply is idempotent on GUIDE markers"
+else bad "bootstrap --apply is idempotent on GUIDE markers" "before=$GUIDE_START after=$GUIDE_AGAIN"; fi
+echo 'not-the-pack' > "$BOOT/ruff.toml"
+expect_exit 1 "refuses overwrite without --force" "$BOOT" pack install python --apply
+rm -rf "$BOOT"
+
+echo
+echo "prompts — greenfield onboard skips archaeology; Judge knows kickoff"
+if grep -q 'Do not do the archaeology' "$ROOT/payload/agents/office-manager.md" && \
+   grep -q 'do not do the archaeology' "$ROOT/payload/commands/office-onboard.md"; then
+  ok "greenfield onboard does not require archaeology"
+else bad "greenfield onboard does not require archaeology"; fi
+if grep -q 'kickoff' "$ROOT/payload/agents/office-judge.md" && \
+   grep -q 'kickoff_eligible' "$ROOT/payload/agents/office-judge.md"; then
+  ok "Judge declares the kickoff route"
+else bad "Judge declares the kickoff route"; fi
+if grep -q 'Do not hand to `office-devils-advocate`' "$ROOT/payload/agents/office-planner.md"; then
+  ok "Planner skips DA on kickoff"
+else bad "Planner skips DA on kickoff"; fi
 
 echo
 echo "payload integrity — this repo's own sensors"
@@ -128,6 +172,8 @@ if [ -f "$WORK/.cursor/agents/office-judge.md" ]; then ok "installs cursor subag
 else bad "installs cursor subagents"; fi
 if [ -x "$WORK/.cursor/office/bin/office" ]; then ok "installs the CLI under .cursor/office"
 else bad "installs the CLI under .cursor/office"; fi
+if [ -f "$WORK/.the-office/config.yml" ]; then ok "install scaffolds an empty board"
+else bad "install scaffolds an empty board"; fi
 if grep -q '^readonly: true$' "$WORK/.cursor/agents/office-judge.md"; then ok "marks audit-only agents readonly"
 else bad "marks audit-only agents readonly"; fi
 if ! grep -q '^tools:' "$WORK/.cursor/agents/office-judge.md"; then ok "strips Claude-only tools frontmatter"

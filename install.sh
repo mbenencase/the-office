@@ -5,9 +5,9 @@
 #   ./install.sh [target-repo] [--link] [--uninstall] [--force] [--runtime claude|cursor|both]
 #
 # Copies the payload into <target>/.claude/ and/or .cursor/ and leaves a VERSION
-# stamp so an upgrade can tell what it is replacing. Board state under
-# .the-office/ is never touched by install or uninstall — it belongs to the
-# repo, not to this tool.
+# stamp so an upgrade can tell what it is replacing. If the target has no board,
+# install runs `office init` (empty .the-office/, no pack files, no harness.md).
+# Uninstall never deletes .the-office/ — board state belongs to the repo.
 
 set -euo pipefail
 
@@ -195,14 +195,12 @@ OFFICE="$CLAUDE/office"
 
 if [ ! -d "$TARGET/.the-office" ]; then
   echo
-  echo "  This repo has no board yet. Next:"
-  if [ "$RUNTIME" = "cursor" ] || [ "$RUNTIME" = "both" ]; then
-    echo "    /office-onboard      audit the harness and propose controls"
-    echo "    /office <request>    run a request through the pipeline"
-  else
-    echo "    /office-onboard      audit the harness and propose controls"
-    echo "    /office <request>    run a request through the pipeline"
-  fi
+  (cd "$TARGET" && node "$OFFICE/bin/office.mjs" init) | sed 's/^/  /' || \
+    warn "could not scaffold .the-office/ — run office init in the target repo."
+  echo
+  echo "  Next:"
+  echo "    /office-onboard python      # or typescript, go, rust — Gate 3, then:"
+  echo "    /office <request>           # first product request uses the kickoff route"
 else
   echo
   node "$OFFICE/bin/office.mjs" validate 2>&1 | sed 's/^/  /' || \
