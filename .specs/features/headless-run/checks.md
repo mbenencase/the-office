@@ -247,7 +247,7 @@ Proof: `node --test --test-name-pattern="inline config equals the template" test
 **C70** - No line under `payload/` or in `README.md` matches `next.*exit 1` (case-insensitive) or `exits 1.*(in flight|blocked|complete)`, and `payload/commands/office-next.md` contains each of `3`, `10` and `12` as an exit code beside its meaning (AC 66)
 Proof: `! grep -rniE "next.*exit 1|exits 1.*(in flight|blocked|complete)" payload README.md && grep -qE "\b12\b" payload/commands/office-next.md && grep -qE "\b10\b" payload/commands/office-next.md && grep -qE "exits? 3|\b3\b.*(complete|empty)" payload/commands/office-next.md`
 
-### S5 - the headless path is documented and has a real-runtime job · ~5 files · ~40 KB · ~10k
+### S5 - the headless path is documented and has a real-runtime job · ~5 files · ~40 KB · ~10k · complete
 
 **C71** - `README.md` has a heading containing `Headless` whose section contains `office run`, each of the exit codes `0`, `1`, `2`, `10`, `11` with its meaning, the keys `approvals:` and `run:`, and the word `container` within 5 lines of every occurrence of `bypassPermissions`, `dontAsk` or `auto` used as a `permission_mode` value; `payload/skills/office/SKILL.md` contains `office run`, `approvals`, and the codes `10` and `11`; `scripts/check-mermaid.mjs README.md` still exits 0 as part of `tests/run.sh` (AC 67, 70)
 Proof: `node --test --test-name-pattern="headless docs" tests/run.test.mjs`

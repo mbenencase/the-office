@@ -1354,3 +1354,68 @@ test('init writes run and approvals', (t) => {
   assert.equal(text, template.replaceAll('{{VERSION}}', version));
   s.office(0, 'validate');
 });
+
+/* ------------------------------------------------------------------ *
+ * S5 - the headless path is documented and has a real-runtime job
+ * ------------------------------------------------------------------ */
+
+test('headless docs', () => {
+  const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8').split('\n');
+  const start = readme.findIndex((line) => /^#{1,6} .*Headless/.test(line));
+  assert.ok(start >= 0, 'a heading containing Headless');
+  const level = /^#+/.exec(readme[start])[0].length;
+  let end = readme.length;
+  let fenced = false;
+  for (let i = start + 1; i < readme.length; i++) {
+    if (readme[i].startsWith('```')) fenced = !fenced;
+    const heading = !fenced && /^(#+) /.exec(readme[i]);
+    if (heading && heading[1].length <= level) { end = i; break; }
+  }
+  const section = readme.slice(start, end);
+  const text = section.join('\n');
+  assert.ok(text.includes('office run'));
+  const codes = [['0', /complet/i], ['1', /fail/i], ['2', /usage/i], ['10', /blocked/i], ['11', /approval/i]];
+  for (const [code, meaning] of codes) {
+    assert.ok(section.some((line) => new RegExp(`(^|[^0-9.])${code}([^0-9.]|$)`).test(line) && meaning.test(line)), `exit code ${code} with its meaning`);
+  }
+  assert.ok(text.includes('approvals:'));
+  assert.ok(text.includes('run:'));
+  const relaxed = /bypassPermissions|dontAsk|permission_mode:\s*auto\b/;
+  const hits = readme.map((line, i) => (relaxed.test(line) ? i : -1)).filter((i) => i >= 0);
+  assert.ok(hits.length > 0, 'an example that relaxes permissions');
+  for (const i of hits) {
+    assert.ok(readme.slice(Math.max(0, i - 5), i + 6).some((line) => /container/i.test(line)), `README.md:${i + 1} relaxes permissions with no container nearby`);
+  }
+  const skill = fs.readFileSync(path.join(repo, 'payload/skills/office/SKILL.md'), 'utf8');
+  assert.ok(skill.includes('office run'));
+  assert.ok(skill.includes('approvals'));
+  assert.match(skill, /\b10\b/);
+  assert.match(skill, /\b11\b/);
+});
+
+test('headless workflow is manual only', () => {
+  const dir = path.join(repo, '.github/workflows');
+  const files = fs.readdirSync(dir).filter((name) => /office(\.mjs)? run\b/.test(fs.readFileSync(path.join(dir, name), 'utf8')));
+  assert.equal(files.length, 1, `workflows that run office run: ${files.join(', ')}`);
+  const text = fs.readFileSync(path.join(dir, files[0]), 'utf8');
+  const lines = text.split('\n');
+  // Triggers: the keys nested under the top-level `on:`.
+  const on = lines.findIndex((line) => /^on:\s*$/.test(line));
+  assert.ok(on >= 0, 'a block-style on: key');
+  const triggers = [];
+  for (let i = on + 1; i < lines.length && !/^\S/.test(lines[i]); i++) {
+    const key = /^ {2}([a-z_]+):/.exec(lines[i]);
+    if (key) triggers.push(key[1]);
+  }
+  assert.deepEqual(triggers, ['workflow_dispatch']);
+  assert.match(text, /install\.sh/);
+  assert.match(text, /office(\.mjs)? run [^\n]*--report/);
+  assert.match(text, /-eq 0/);
+  assert.match(text, /by_role/);
+  assert.match(text, /event === ['"]step['"]/);
+
+  const suite = fs.readFileSync(path.join(repo, 'tests/run.sh'), 'utf8');
+  assert.ok(suite.split('\n').some((line) => line.includes('node --test') && line.includes('tests/run.test.mjs')));
+  assert.match(fs.readFileSync(path.join(repo, 'docs/rfcs/0002-headless.md'), 'utf8'), /^\| Status \| Implemented \|$/m);
+  assert.match(fs.readFileSync(path.join(repo, 'docs/rfcs/README.md'), 'utf8'), /0002-headless\.md\).*Implemented/);
+});
