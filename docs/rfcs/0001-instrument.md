@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft |
+| Status | Implemented |
 | Roadmap phase | [1 — Instrument](../ROADMAP.md#phase-1--instrument) |
 | Depends on | — |
 | Ships in | `payload/bin/office.mjs`, `templates/config.yml.tmpl` |
@@ -174,7 +174,7 @@ log is a side effect of the CLI.
 
 ## Test plan
 
-- `tests/lifecycle.test.mjs`: drive one task through
+- `tests/events.test.mjs`: drive one task through
   claim, failing check, passing check, scope, review, retry, review, done, and
   assert the exact event sequence and fields.
 - A refused command leaves the log byte-identical.
@@ -194,8 +194,12 @@ log is a side effect of the CLI.
 
 ## Open questions
 
-- Should `office spec approve` log an event in this phase? RFC 0002 needs one;
-  adding it here costs one line and gives interactive runs an approval
-  timestamp.
+Both were answered before implementation.
+
+- Should `office spec approve` log an event in this phase? **No.** RFC 0002
+  defines that event together with the approval policy, and its fields (`gate`,
+  `mode`) do not exist yet. Readers ignore unknown events, so adding it later is
+  additive.
 - Should `findings add` also emit an event, so one file tells the whole story,
-  or is the ledger enough?
+  or is the ledger enough? **The ledger is enough.** One fact in two committed
+  files can disagree.
