@@ -19,13 +19,14 @@ OFFICE="node .claude/office/bin/office.mjs"
 ```bash
 $OFFICE board              # whole board
 $OFFICE board <feature>    # one feature
-$OFFICE next               # next ready task id; exit 1 if none
+$OFFICE next               # next ready task id; a non-zero code when there is none
 $OFFICE validate           # integrity: schema, dupes, orphans, cycles
 ```
 
 `next` returns a task only when it is `pending` **and** every `depends_on` is
-`completed`. Exit 1 has three distinct meanings and the message says which:
-work is in flight, something is blocked and needs a human, or the board is done.
+`completed`. When there is none, the exit code says why: `12` work is in
+flight, `10` something is blocked and needs a human, `3` the board is complete
+or empty.
 
 ## Transitions
 

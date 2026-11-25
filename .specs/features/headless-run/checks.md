@@ -28,7 +28,7 @@ change one thing from that. How the stub is told its scenario is the builder's c
 
 ## Checks
 
-### S1 - `office run` drives a request to a finished board · ~4 files · ~90 KB · ~23k
+### S1 - `office run` drives a request to a finished board · ~4 files · ~90 KB · ~23k · complete
 
 **C1** - In the happy feature scenario with both approvals `auto`, `office run "add a greeting" --json` exits 0, both tasks have `status: completed`, and the runtime was invoked for exactly this role sequence: `office-judge`, `office-product-owner`, `office-planner`, `office-devils-advocate`, `office-swe-fast`, `office-reviewer`, `office-swe`, `office-reviewer` (AC 7, 10, 11, 16)
 Proof: `node --test --test-name-pattern="happy feature run completes the board" tests/run.test.mjs`
@@ -114,7 +114,7 @@ Proof: `node --test --test-name-pattern="run lock lifecycle" tests/run.test.mjs`
 **C28** - Each of these eight invocations exits 2 with usage on stderr and leaves `events.jsonl` byte-identical and the stub uninvoked: `run` with no arguments; `run "x" --resume`; `run "x" --bogus`; `run "x" --step-timeout 0`; `run "x" --step-timeout abc`; `run "x" --max-steps -1`; `run "x" --feature Bad_Slug`; `run "x" --feature sample` on a board where feature `sample` exists (AC 27)
 Proof: `node --test --test-name-pattern="usage errors exit 2" tests/run.test.mjs`
 
-### S2 - gates are a policy the supervisor applies and records · ~3 files · ~75 KB · ~19k
+### S2 - gates are a policy the supervisor applies and records · ~3 files · ~75 KB · ~19k · complete
 
 **C29** - On a board whose `config.yml` has no `approvals:` key and the default `gates:`, the happy feature run stops after the Product Owner with exit 11 (gate 1 is `human`) (AC 28)
 Proof: `node --test --test-name-pattern="default policy is human" tests/run.test.mjs`
@@ -170,7 +170,7 @@ Proof: `node --test --test-name-pattern="validate rejects invalid approvals and 
 **C46** - `payload/agents/office-product-owner.md` contains the word `headless`, names `Assumptions` and `open_questions` in that rule, and states it never calls `office spec approve` in a headless run (AC 44)
 Proof: `node --test --test-name-pattern="product owner prompt carries the headless rule" tests/run.test.mjs`
 
-### S3 - `--resume` continues from the board · ~2 files · ~70 KB · ~18k
+### S3 - `--resume` continues from the board · ~2 files · ~70 KB · ~18k · complete
 
 **C47** - After a run that stopped at gate 1 with exit 11, `office spec approve` with the printed hash, then `office run --resume --json` (no `--feature`): exit 0, both tasks `completed`, and in the resumed run neither `office-judge` nor `office-product-owner` is invoked (AC 45, 47, 51)
 Proof: `node --test --test-name-pattern="resume after gate 1 approval completes the board" tests/run.test.mjs`
@@ -199,7 +199,7 @@ Proof: `node --test --test-name-pattern="resume plans when there are no tasks" t
 **C55** - On a resume where `greeting/task-02` is `in-progress` and task-01 is `completed`, the first role invoked is `office-swe` with `task` `greeting/task-02`; on a resume where it is `review`, the first role invoked is `office-reviewer` for it (AC 50)
 Proof: `node --test --test-name-pattern="resume continues work in flight" tests/run.test.mjs`
 
-### S4 - the ending and the cost are readable by a script · ~5 files · ~95 KB · ~24k
+### S4 - the ending and the cost are readable by a script · ~5 files · ~95 KB · ~24k · complete
 
 **C56** - Each ending has its exit code and exactly one `run_end` for its run id with the matching `outcome`: completed board 0 / `completed`; crashed step 1 / `failed`; blocked task with nothing ready 10 / `blocked`; unapproved human gate 11 / `awaiting_approval`; and `run_end` carries `feature: "greeting"` and `route: "feature"` in the three endings where the Judge returned (AC 52, 53)
 Proof: `node --test --test-name-pattern="five endings five exit codes" tests/run.test.mjs`

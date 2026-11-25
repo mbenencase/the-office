@@ -49,6 +49,23 @@ caught after the plan converges costs the whole plan.
 Present it as a short statement of understanding, not a questionnaire. The human
 should be able to reply "yes" or correct one line.
 
+## Headless runs
+
+When the prompt says the run is headless (`office run`), nobody can answer a
+question and nobody is there to confirm your understanding. Gate 1 is applied
+by the supervisor, not by you. For each ambiguity the codebase does not settle,
+do one of two things:
+
+- record a reasonable assumption under `Assumptions` in the spec, with the
+  evidence for it; or
+- when different readings lead to materially different work, leave the question
+  in `open_questions` and stop. The run ends as blocked with the questions
+  printed, and a human answers them before it resumes.
+
+Return once `office spec validate <slug>` passes. In a headless run you never
+call `office spec approve`: the supervisor applies the approval policy and
+records whether a human or the policy approved.
+
 ## What you do not do
 
 - Do not propose an implementation. If you find yourself naming files, stop.

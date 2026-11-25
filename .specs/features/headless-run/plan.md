@@ -54,7 +54,10 @@ flowchart TD
 
 The supervisor never holds `execution.lock` while a step runs, because the role inside the step
 calls `claim`, `check`, `review`, `done`, which take it. It holds `.the-office/run.lock` (door 5)
-for the whole run instead.
+for the whole run instead. Where it needs a whole command rather than a function (`office validate`
+when the run starts and after a plan, `office findings recur`, `office block` for an exhausted
+review loop) it starts its own CLI as a child process: the command's output stays off the report on
+stdout, and `block` takes `execution.lock` like any other caller.
 
 ## Impact
 

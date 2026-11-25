@@ -74,7 +74,7 @@ review and done reject uncommitted source or stale evidence.
 One task in flight at a time, in `depends_on` order:
 
 ```bash
-$OFFICE next          # the next ready task, or exit 1
+$OFFICE next          # the next ready task, or a code: 3 complete, 10 blocked, 12 in flight
 $OFFICE claim <id>    # pending → in-progress, increments attempts
 $OFFICE check <id>    # run the executable DoD
 $OFFICE scope <id>    # committed + working changes since base_commit
@@ -83,6 +83,40 @@ $OFFICE retry <id> --reason "..." # review -> in-progress, or blocked at the cap
 $OFFICE done <id>     # Reviewer only — records branch and commit
 $OFFICE block <id> --reason "..."   # escalate to a human
 ```
+
+## Headless
+
+`$OFFICE run "<request>"` is this same pipeline with the CLI as the loop instead
+of a model: it starts the runtime once per role step and picks the next step
+from the board. `$OFFICE run --resume` continues the board after a stop. The
+interactive `/office` command stays for a human who wants to watch and steer.
+
+If you are a role inside a headless run, do your step and return. Do not ask
+questions, and never call `spec approve` or `plan approve` yourself.
+
+The approval policy is `approvals:` in `.the-office/config.yml`. `spec` (Gate 1)
+and `plan` (Gate 2) are each `human` or `auto`:
+
+- `human` — the run stops and prints the command. A person runs
+  `$OFFICE spec approve <slug> --hash SHA --by NAME` or
+  `$OFFICE plan approve <slug> --hash SHA --by NAME`, then `$OFFICE run --resume`.
+- `auto` — the run approves as `policy:auto`. The approval file and the event
+  log record `mode: policy`; a person's approval records `mode: human`.
+
+`harness` (Gate 3) accepts only `human`: no unattended run installs a harness
+change. A key under `approvals:` wins over the matching `gates:` boolean. A spec
+with open questions is never approved by the policy.
+
+| Code | `office run` ended |
+|---|---|
+| 0 | completed — every task of the feature is `completed` |
+| 1 | failed — a step crashed, timed out or twice returned without doing its job, or the board is invalid |
+| 2 | usage error — nothing ran |
+| 10 | blocked — a task is `blocked`, the spec has open questions, or the plan did not converge |
+| 11 | awaiting approval — a `human` gate is not approved, or the request is a harness change |
+
+`--json` prints and `--report <file>` writes the run report: outcome, task
+counts, and token usage by role and by model.
 
 ## Loop bounds
 

@@ -74,7 +74,7 @@ test('claim enforces dependencies, one task in flight, and a hard retry budget',
   f.office(1, 'claim', 'sample/task-02');
   f.edit('depends_on: ["sample/task-01"]', 'depends_on: []', 'sample/task-02');
   f.office(0, 'claim', id);
-  f.office(1, 'next');
+  f.office(12, 'next'); // work in flight
   f.office(1, 'claim', 'sample/task-02');
   for (let attempt = 1; attempt <= 3; attempt++) {
     f.verify(); f.office(0, 'review', id);
