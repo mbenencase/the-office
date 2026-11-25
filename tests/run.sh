@@ -8,8 +8,11 @@ OFFICE="node $ROOT/payload/bin/office.mjs"
 PASS=0; FAIL=0
 export NO_COLOR=1
 
-ok()   { PASS=$((PASS+1)); printf '  \033[32mpass\033[0m  %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; }
+# Colour for a terminal or a CI log; plain when piped, so a result line can be grepped.
+if [ -t 1 ] || [ -n "${CI:-}" ]; then GREEN=$'\033[32m'; RED=$'\033[31m'; RESET=$'\033[0m'; else GREEN=''; RED=''; RESET=''; fi
+
+ok()   { PASS=$((PASS+1)); printf '  %spass%s  %s\n' "$GREEN" "$RESET" "$1"; }
+bad()  { FAIL=$((FAIL+1)); printf '  %sFAIL%s  %s\n' "$RED" "$RESET" "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; }
 
 # expect_exit <code> <desc> <dir> <args...>
 expect_exit() {
@@ -35,6 +38,7 @@ expect_exit 1 "rejects an orphan dependency"               "$ROOT/tests/fixtures
 expect_match "cycle"        "names the cycle"              "$ROOT/tests/fixtures/cycle"      validate
 expect_match "duplicate"    "names the duplicate"          "$ROOT/tests/fixtures/dup-id"     validate
 expect_match "not executable" "explains the empty checks"  "$ROOT/tests/fixtures/no-checks"  validate
+expect_exit 0 "this repository's own board and event log validate" "$ROOT" validate
 
 echo
 echo "next — dependency ordering"
@@ -46,7 +50,7 @@ expect_exit 1 "refuses a task with no checks"    "$ROOT/tests/fixtures/no-checks
 
 echo
 echo "lifecycle and verification — adversarial integration tests"
-if node --test "$ROOT/tests/lifecycle.test.mjs" "$ROOT/tests/spec.test.mjs"; then
+if node --test "$ROOT/tests/lifecycle.test.mjs" "$ROOT/tests/spec.test.mjs" "$ROOT/tests/events.test.mjs"; then
   ok "lifecycle and evidence integration suite"
 else
   bad "lifecycle and evidence integration suite"

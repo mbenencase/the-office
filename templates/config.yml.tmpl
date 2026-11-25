@@ -1,5 +1,8 @@
 version: {{VERSION}}
 
+# Layout of this board. A CLI refuses a board whose schema is newer than its own.
+schema: 1
+
 # Model tiers. Task files reference the tier, never a model id, so a model
 # release does not invalidate every task on the board.
 tiers:
@@ -22,4 +25,5 @@ gates:
 janitor:
   recurrence_threshold: 3
 
+# Populated by `office audit`.
 stacks: []

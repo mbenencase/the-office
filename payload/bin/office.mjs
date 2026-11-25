@@ -16,6 +16,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '0.4.0';
+// Layout of .the-office/. Distinct from VERSION: a board is refused only when
+// its schema is newer than this, never because a newer patch release wrote it.
+const SCHEMA = 1;
 
 const STATUSES = ['pending', 'in-progress', 'review', 'blocked', 'completed'];
 const TIERS = ['fast', 'standard', 'deep'];
@@ -215,6 +218,20 @@ function loadConfig(root) {
   };
 }
 
+function boardSchema(root) {
+  const p = path.join(root, '.the-office', 'config.yml');
+  if (!fs.existsSync(p)) return 0;
+  const parsed = parseYaml(fs.readFileSync(p, 'utf8').split('\n'));
+  return Object.hasOwn(parsed, 'schema') ? parsed.schema : 0;
+}
+
+// An older CLI must not write to a board it does not understand.
+function requireSchema(root) {
+  const schema = boardSchema(root);
+  if (!Number.isInteger(schema) || schema < 0) die(`config.yml has schema "${schema}"; it must be a non-negative integer.`);
+  if (schema > SCHEMA) die(`board schema ${schema} is newer than CLI schema ${SCHEMA}; upgrade the-office before using this board.`);
+}
+
 function loadTasks(root, feature) {
   const base = path.join(root, '.the-office', 'features');
   if (!fs.existsSync(base)) return [];
@@ -311,7 +328,7 @@ function git(root, args) {
 
 // Only board bookkeeping is excluded. Installed agents and harness controls are
 // code: changes to them must remain visible to scope and verification.
-const isBoardState = (f) => f.startsWith('.the-office/features/') || f === '.the-office/findings.jsonl' || f === '.the-office/execution.lock';
+const isBoardState = (f) => f.startsWith('.the-office/features/') || f === '.the-office/findings.jsonl' || f === '.the-office/events.jsonl' || f === '.the-office/execution.lock';
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 function gitRequired(root, args) {
   const result = git(root, args);
@@ -496,6 +513,46 @@ function changeStatus(t, status, fields = {}, note) {
   t.text = text;
   console.log(`${status} ${t.data.id}`);
 }
+
+/* ------------------------------------------------------------------ *
+ * Event log — how a task got where it is
+ * ------------------------------------------------------------------ */
+
+const eventsPath = (root) => path.join(root, '.the-office', 'events.jsonl');
+const taskRef = (t) => ({ task: t.data.id, feature: t.feature });
+
+// Appended only after the state change is durable. Line order is event order;
+// there is no sequence number, so a union merge cannot duplicate one.
+function logEvent(root, event, subject, outcome, fields = {}) {
+  fs.appendFileSync(eventsPath(root), `${JSON.stringify({ v: 1, at: new Date().toISOString(), event, ...subject, outcome, ...fields })}\n`);
+}
+
+// Legal source states and resulting state per task event. A `retry` whose
+// outcome is "exhausted" lands in `blocked` instead.
+const EVENT_RULES = {
+  claim: { from: ['blocked'], to: 'in-progress' },
+  check: { from: ['in-progress', 'review'] },
+  scope: { from: ['in-progress', 'review'] },
+  review: { from: ['in-progress'], to: 'review' },
+  retry: { from: ['review'], to: 'in-progress' },
+  done: { from: ['review'], to: 'completed' },
+  block: { from: ['in-progress', 'review', 'blocked'], to: 'blocked' },
+};
+
+/** Non-empty log lines with their 1-based line number; `value` is undefined when the line is not JSON. */
+function readEventLines(root) {
+  const p = eventsPath(root);
+  if (!fs.existsSync(p)) return [];
+  const out = [];
+  fs.readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+    if (!line.trim()) return;
+    let value;
+    try { value = JSON.parse(line); } catch { /* reported by validate, ignored by stats */ }
+    out.push({ n: i + 1, value });
+  });
+  return out;
+}
+
 function reasonArg(argv) {
   const i = argv.indexOf('--reason');
   const reason = i >= 0 ? argv[i + 1]?.trim() : '';
@@ -529,6 +586,9 @@ cmds.init = (argv) => {
   if (!fs.existsSync(cfg) || argv.includes('--force')) {
     fs.writeFileSync(cfg, `version: ${VERSION}
 
+# Layout of this board. A CLI refuses a board whose schema is newer than its own.
+schema: ${SCHEMA}
+
 # Model tiers. Task files reference the tier, never a model id, so a model
 # release does not invalidate every task on the board.
 tiers:
@@ -555,8 +615,17 @@ janitor:
 stacks: []
 `);
   }
-  const findings = path.join(dir, 'findings.jsonl');
-  if (!fs.existsSync(findings)) fs.writeFileSync(findings, '');
+  for (const log of [path.join(dir, 'findings.jsonl'), eventsPath(root)]) {
+    if (!fs.existsSync(log)) fs.writeFileSync(log, '');
+  }
+  // Both logs are committed and append-only; without a union merge, two
+  // branches that each append conflict on every merge.
+  const attrs = path.join(root, '.gitattributes');
+  const union = '.the-office/*.jsonl merge=union';
+  const current = fs.existsSync(attrs) ? fs.readFileSync(attrs, 'utf8') : '';
+  if (!current.split('\n').some((l) => l.trim() === union)) {
+    fs.writeFileSync(attrs, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${union}\n`);
+  }
   console.log(`${c.green('initialised')} ${path.relative(process.cwd(), dir) || '.the-office'}/`);
   console.log(c.dim('next: run /office-onboard to audit the repo and propose a harness.'));
 };
@@ -630,6 +699,7 @@ cmds.claim = (argv) => {
   const base = t.data.base_commit ? requireBase(root, t) : gitRequired(root, ['rev-parse', 'HEAD']);
   saveEvidence(root, t, {});
   changeStatus(t, 'in-progress', { attempts: n, base_commit: base });
+  logEvent(root, 'claim', taskRef(t), 'ok', { attempt: n, base_commit: base });
 };
 
 cmds.retry = (argv) => {
@@ -642,9 +712,13 @@ cmds.retry = (argv) => {
   saveEvidence(root, t, {});
   if ((t.data.attempts ?? 0) >= (t.data.max_attempts ?? 3)) {
     changeStatus(t, 'blocked', {}, `**blocked:** retry budget exhausted. ${reason}`);
+    // One command, one line: the escalation is this retry's outcome, not a second `block` event.
+    logEvent(root, 'retry', taskRef(t), 'exhausted', { attempt: t.data.attempts ?? 0, reason });
     die('max_attempts reached; escalated to a human.');
   }
-  changeStatus(t, 'in-progress', { attempts: (t.data.attempts ?? 0) + 1 }, `**review findings:** ${reason}`);
+  const n = (t.data.attempts ?? 0) + 1;
+  changeStatus(t, 'in-progress', { attempts: n }, `**review findings:** ${reason}`);
+  logEvent(root, 'retry', taskRef(t), 'ok', { attempt: n, reason });
 };
 
 cmds.review = (argv) => {
@@ -654,6 +728,7 @@ cmds.review = (argv) => {
   requireDependencies(t, tasks);
   requireVerified(root, t);
   changeStatus(t, 'review');
+  logEvent(root, 'review', taskRef(t), 'ok');
 };
 
 cmds.done = (argv) => {
@@ -662,10 +737,10 @@ cmds.done = (argv) => {
   requireIdle(tasks, t);
   requireDependencies(t, tasks);
   requireVerified(root, t);
-  changeStatus(t, 'completed', {
-    branch: gitRequired(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
-    commit: gitRequired(root, ['rev-parse', 'HEAD']),
-  });
+  const commit = gitRequired(root, ['rev-parse', 'HEAD']);
+  const branch = gitRequired(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  changeStatus(t, 'completed', { branch, commit });
+  logEvent(root, 'done', taskRef(t), 'ok', { commit, branch });
 };
 
 cmds.block = (argv) => {
@@ -674,6 +749,7 @@ cmds.block = (argv) => {
   requireStatus(t, ['pending', 'in-progress', 'review', 'blocked']);
   saveEvidence(root, t, {});
   changeStatus(t, 'blocked', {}, `**blocked:** ${reason}`);
+  logEvent(root, 'block', taskRef(t), 'ok', { reason, from: t.data.status });
 };
 
 cmds.check = (argv) => {
@@ -686,16 +762,24 @@ cmds.check = (argv) => {
   saveEvidence(root, t, evidence);
   const before = snapshot(root, t);
   const results = [];
+  const started = process.hrtime.bigint();
+  const elapsed = () => Number((process.hrtime.bigint() - started) / 1000000n);
   for (const cmd of checks) {
     console.log(cmd);
     const r = spawnSync(cmd, { cwd: root, shell: true, stdio: 'inherit' });
-    if (r.status !== 0) die(`FAIL ${cmd} (exit ${r.status}); definition of done not met.`);
+    if (r.status !== 0) {
+      logEvent(root, 'check', taskRef(t), 'fail', { duration_ms: elapsed(), command: cmd, exit: r.status });
+      die(`FAIL ${cmd} (exit ${r.status}); definition of done not met.`);
+    }
     results.push({ command: cmd, exit: r.status });
   }
+  const duration_ms = elapsed();
+  // Checks that pass but rewrite code or contract reach no verdict, so no event.
   const after = snapshot(root, taskContext(t.data.id).t);
   if (!sameSnapshot(before, after)) die('checks changed code or contract; review those changes and rerun.');
   evidence.check = { snapshot: after, results, at: new Date().toISOString() };
   saveEvidence(root, t, evidence);
+  logEvent(root, 'check', taskRef(t), 'ok', { duration_ms });
   console.log(`all checks pass for ${t.data.id}`);
 };
 
@@ -710,15 +794,20 @@ cmds.scope = (argv) => {
   const current = snapshot(root, t);
   const files = changedFiles(root, current.base);
   const outside = files.filter((f) => !matchesAny(f, globs));
-  if (outside.length) die(`files outside the declared scope of ${t.data.id}:\n${outside.join('\n')}`);
+  if (outside.length) {
+    logEvent(root, 'scope', taskRef(t), 'fail', { files: files.length, outside: outside.length });
+    die(`files outside the declared scope of ${t.data.id}:\n${outside.join('\n')}`);
+  }
   if (!sameSnapshot(current, snapshot(root, taskContext(t.data.id).t))) die('code or contract changed during scope verification; rerun.');
   evidence.scope = { snapshot: current, files, at: new Date().toISOString() };
   saveEvidence(root, t, evidence);
+  logEvent(root, 'scope', taskRef(t), 'ok', { files: files.length });
   console.log(`in scope — ${files.length} changed file(s) all match ${t.data.id}`);
 };
 
 cmds.validate = () => {
   const root = requireRoot();
+  console.log(`board schema ${boardSchema(root)}, CLI schema ${SCHEMA}`);
   const tasks = loadTasks(root);
   const errors = [];
   const warnings = [];
@@ -784,6 +873,22 @@ cmds.validate = () => {
     catch (err) { errors.push(err.message); }
   }
 
+  // The event log: every line parses, and each task's known events form a legal
+  // sequence. A task's first event is legal from any state, because the log may
+  // start mid-life; unknown events are skipped so later CLIs can add their own.
+  const states = new Map();
+  for (const { n, value: e } of readEventLines(root)) {
+    const at = (m) => errors.push(`.the-office/events.jsonl:${n}: ${m}`);
+    if (!isMap(e) || typeof e.event !== 'string') { at('not a JSON object with a string "event"'); continue; }
+    if (!Object.hasOwn(EVENT_RULES, e.event)) continue;
+    if (typeof e.task !== 'string') { at(`"${e.event}" event has no task id`); continue; }
+    const rule = EVENT_RULES[e.event];
+    const state = states.get(e.task);
+    if (state && !rule.from.includes(state)) at(`"${e.event}" is not a legal event for ${e.task} in state "${state}"`);
+    const to = e.event === 'retry' && e.outcome === 'exhausted' ? 'blocked' : rule.to;
+    if (to) states.set(e.task, to);
+  }
+
   for (const w of warnings) console.error(`${c.yellow('warn')}  ${w}`);
   if (errors.length) {
     for (const e of errors) console.error(`${c.red('error')} ${e}`);
@@ -791,6 +896,86 @@ cmds.validate = () => {
     process.exit(1);
   }
   console.log(c.green(`ok — ${tasks.length} task(s) valid${warnings.length ? `, ${warnings.length} warning(s)` : ''}`));
+};
+
+/* ------------------------------------------------------------------ *
+ * stats — the metrics the event log exists for
+ * ------------------------------------------------------------------ */
+
+function fmtMs(ms) {
+  if (ms === null) return '-';
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+// Reads the log and the board. Writes nothing and takes no lock.
+cmds.stats = (argv) => {
+  const root = requireRoot();
+  const feature = argv.find((a) => !a.startsWith('-'));
+  const byTask = new Map();
+  const requested = new Map();
+  const lastDone = new Map();
+  for (const { value: e } of readEventLines(root)) {
+    if (!isMap(e) || (feature && e.feature !== feature)) continue;
+    if (e.event === 'feature') { if (!requested.has(e.feature)) requested.set(e.feature, e.at); continue; }
+    if (!Object.hasOwn(EVENT_RULES, e.event) || typeof e.task !== 'string') continue;
+    if (!byTask.has(e.task)) byTask.set(e.task, []);
+    byTask.get(e.task).push(e);
+    if (e.event === 'done') lastDone.set(e.feature, e.at);
+  }
+
+  const span = (from, to) => Date.parse(to) - Date.parse(from);
+  const ratio = (a, b) => (b ? a / b : null);
+  const cycles = [];
+  let passed = 0, checked = 0, retries = 0, max = 0, claimed = 0, escalated = 0;
+  for (const events of byTask.values()) {
+    const claim = events.find((e) => e.event === 'claim');
+    const done = events.findLast((e) => e.event === 'done');
+    if (claim && done && Number.isFinite(span(claim.at, done.at))) cycles.push(span(claim.at, done.at));
+    const first = events.find((e) => e.event === 'check');
+    if (first) { checked += 1; if (first.outcome === 'ok') passed += 1; }
+    const n = events.filter((e) => e.event === 'retry').length;
+    retries += n;
+    max = Math.max(max, n);
+    if (claim) claimed += 1;
+    const last = events.at(-1);
+    if (last.event === 'block' || (last.event === 'retry' && last.outcome === 'exhausted')) escalated += 1;
+  }
+  cycles.sort((a, b) => a - b);
+  const n = cycles.length;
+  const lead = {};
+  for (const [slug, at] of requested) {
+    if (lastDone.has(slug) && Number.isFinite(span(at, lastDone.get(slug)))) lead[slug] = span(at, lastDone.get(slug));
+  }
+
+  const report = {
+    metrics: {
+      cycle_time_ms: {
+        n,
+        median: n ? (cycles[Math.floor((n - 1) / 2)] + cycles[Math.ceil((n - 1) / 2)]) / 2 : null,
+        p90: n ? cycles[Math.ceil(0.9 * n) - 1] : null, // nearest rank
+      },
+      lead_time_ms: lead,
+      first_pass_check_rate: { passed, tasks: checked, rate: ratio(passed, checked) },
+      retries_per_task: { retries, tasks: claimed, mean: ratio(retries, claimed), max },
+      escalation_rate: { escalated, tasks: claimed, rate: ratio(escalated, claimed) },
+    },
+    // Tasks on the board that predate the log: in no rate, but counted.
+    excluded: loadTasks(root, feature).filter((t) => !byTask.has(t.data.id ?? t.expectedId)).length,
+  };
+
+  if (argv.includes('--json')) { console.log(JSON.stringify(report, null, 2)); return; }
+
+  const m = report.metrics;
+  const pct = (r) => (r.rate === null ? '-' : `${Math.round(r.rate * 100)}%`);
+  table(['METRIC', 'VALUE', 'FROM'], [
+    ['cycle time', `median ${fmtMs(m.cycle_time_ms.median)}, p90 ${fmtMs(m.cycle_time_ms.p90)}`, `${n} completed task(s)`],
+    ['lead time', Object.entries(lead).map(([slug, ms]) => `${slug} ${fmtMs(ms)}`).join(', ') || '-', `${Object.keys(lead).length} feature(s)`],
+    ['first-pass check rate', pct(m.first_pass_check_rate), `${passed}/${checked} checked task(s)`],
+    ['retries per task', `mean ${m.retries_per_task.mean === null ? '-' : m.retries_per_task.mean.toFixed(2)}, max ${max}`, `${retries} retry(ies), ${claimed} claimed task(s)`],
+    ['escalation rate', pct(m.escalation_rate), `${escalated}/${claimed} claimed task(s)`],
+  ]);
+  console.log(c.dim(`\n${report.excluded} task(s) excluded: on the board with no event in the log.`));
 };
 
 /* ------------------------------------------------------------------ *
@@ -1123,6 +1308,7 @@ cmds.feature = (argv) => {
   const text = fs.readFileSync(template, 'utf8').replaceAll('{{SLUG}}', slug).replaceAll('{{TITLE}}', flag('title', slug));
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'overview.md'), text);
+  logEvent(root, 'feature', { feature: slug }, 'ok', { type });
   console.log(`created .the-office/features/${slug}/overview.md (${type}); fill the draft and run office spec validate ${slug}`);
 };
 
@@ -1180,7 +1366,8 @@ ${c.dim('board')}
   init [--force]              scaffold .the-office/ in this repo
   board [feature]             render the kanban
   next                        print the next ready task id (exit 1 if none)
-  validate                    schema, duplicate ids, orphan deps, cycles
+  validate                    schema, duplicate ids, orphan deps, cycles, event log
+  stats [feature] [--json]    cycle time, lead time, check rate, retries, escalations
 
 ${c.dim('lifecycle')}
   claim <id>                  pending|blocked -> in-progress, increments attempts
@@ -1218,6 +1405,10 @@ const handler = cmds[cmd] ?? (['--version', '-v'].includes(cmd) ? cmds.version :
   ?? (['--help', '-h'].includes(cmd) ? cmds.help : null);
 if (!handler) die(`unknown command "${cmd}". Run \`office help\`.`);
 try {
+  if (handler !== cmds.help && handler !== cmds.version) {
+    const board = findRoot();
+    if (board) requireSchema(board);
+  }
   // Serialize state/evidence writes across CLI processes, including long checks.
   // A killed process leaves an explicit lock; never silently steal a live run.
   if (['claim', 'retry', 'review', 'done', 'block', 'check', 'scope', 'feature', 'task'].includes(cmd) || (cmd === 'spec' && rest[0] === 'approve')) {

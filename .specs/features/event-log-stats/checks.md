@@ -12,7 +12,7 @@ C40 and C43, which are shell commands. Tests run the CLI as a subprocess in a te
 
 ## Checks
 
-### S1 - lifecycle commands leave an ordered event log · 2 files · 64 KB · ~16k
+### S1 - lifecycle commands leave an ordered event log · 2 files · 64 KB · ~16k · complete
 
 **C1** - Every line the CLI appends to `.the-office/events.jsonl` is one JSON object with `v` = `1`, `at` matching `^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$`, a string `event`, `feature` and `outcome`; `task` equals the task id on all events except `feature` (AC 1)
 Proof: `node --test --test-name-pattern="common fields on every event" tests/events.test.mjs`
@@ -59,7 +59,7 @@ Proof: `node --test --test-name-pattern="full lifecycle event sequence" tests/ev
 **C15** - With `events.jsonl` tracked by Git and carrying uncommitted lines appended by `check` and `scope`, `office review` exits 0, and `office scope` reports `1 changed file` (the log is not counted) (AC 15)
 Proof: `node --test --test-name-pattern="log appends do not stale evidence" tests/events.test.mjs`
 
-### S2 - `office stats` derives the metrics from the log · 3 files · 60 KB · ~15k
+### S2 - `office stats` derives the metrics from the log · 3 files · 60 KB · ~15k · complete
 
 The stats fixture is a hand-written board and log under `tests/fixtures/stats/`: feature `alpha`
 (has a `feature` event; tasks 01-04 done with cycle times 60000, 120000, 180000, 600000 ms; first
@@ -111,7 +111,7 @@ Proof: `node --test --test-name-pattern="help lists stats" tests/events.test.mjs
 **C29** - `office stats` in a directory with no `.the-office/` in it or any parent exits 1 (Surface: `stats` exit 1)
 Proof: `node --test --test-name-pattern="stats with no board" tests/events.test.mjs`
 
-### S3 - the board declares a schema the CLI respects · 3 files · 56 KB · ~14k
+### S3 - the board declares a schema the CLI respects · 3 files · 56 KB · ~14k · complete
 
 **C30** - After `office init` in an empty repo, `.the-office/config.yml` contains the line `schema: 1` (AC 28)
 Proof: `node --test --test-name-pattern="init writes schema 1" tests/events.test.mjs`
@@ -134,7 +134,7 @@ Proof: `node --test --test-name-pattern="validate reports both schemas" tests/ev
 **C36** - The `config.yml` written by `office init` is byte-identical to `templates/config.yml.tmpl` with `{{VERSION}}` replaced by the contents of `VERSION` (AC 33)
 Proof: `node --test --test-name-pattern="inline config equals the template" tests/events.test.mjs`
 
-### S4 - the log is validated and merges cleanly · 4 files · 76 KB · ~19k
+### S4 - the log is validated and merges cleanly · 4 files · 76 KB · ~19k · complete
 
 **C37** - `office validate` exits 1 with output containing `events.jsonl:2` when line 2 of the log is, in turn, `not json`, `[1]`, or `{"v":1}` (AC 34)
 Proof: `node --test --test-name-pattern="validate rejects malformed log lines" tests/events.test.mjs`

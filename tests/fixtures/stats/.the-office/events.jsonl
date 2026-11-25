@@ -1,0 +1,42 @@
+{"v":1,"at":"2026-01-01T00:00:00.000Z","event":"feature","feature":"alpha","outcome":"ok","type":"feature"}
+{"v":1,"at":"2026-01-01T00:01:00.000Z","event":"claim","task":"alpha/task-01","feature":"alpha","outcome":"ok","attempt":1,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:01:10.000Z","event":"check","task":"alpha/task-01","feature":"alpha","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:01:20.000Z","event":"scope","task":"alpha/task-01","feature":"alpha","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:01:30.000Z","event":"review","task":"alpha/task-01","feature":"alpha","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:02:00.000Z","event":"done","task":"alpha/task-01","feature":"alpha","outcome":"ok","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main"}
+{"v":1,"at":"2026-01-01T00:02:00.000Z","event":"claim","task":"alpha/task-02","feature":"alpha","outcome":"ok","attempt":1,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:02:05.000Z","event":"check","task":"alpha/task-02","feature":"alpha","outcome":"fail","duration_ms":80,"command":"npm test","exit":1}
+{"v":1,"at":"2026-01-01T00:02:10.000Z","event":"check","task":"alpha/task-02","feature":"alpha","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:02:20.000Z","event":"scope","task":"alpha/task-02","feature":"alpha","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:02:30.000Z","event":"review","task":"alpha/task-02","feature":"alpha","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:03:00.000Z","event":"retry","task":"alpha/task-02","feature":"alpha","outcome":"ok","attempt":2,"reason":"missing edge case"}
+{"v":1,"at":"2026-01-01T00:03:10.000Z","event":"check","task":"alpha/task-02","feature":"alpha","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:03:20.000Z","event":"scope","task":"alpha/task-02","feature":"alpha","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:03:30.000Z","event":"review","task":"alpha/task-02","feature":"alpha","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:04:00.000Z","event":"done","task":"alpha/task-02","feature":"alpha","outcome":"ok","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main"}
+this line is not JSON
+{"v":1,"at":"2026-01-01T00:04:00.000Z","event":"claim","task":"alpha/task-03","feature":"alpha","outcome":"ok","attempt":1,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:04:10.000Z","event":"check","task":"alpha/task-03","feature":"alpha","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:04:20.000Z","event":"scope","task":"alpha/task-03","feature":"alpha","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:04:30.000Z","event":"review","task":"alpha/task-03","feature":"alpha","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:07:00.000Z","event":"done","task":"alpha/task-03","feature":"alpha","outcome":"ok","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main"}
+{"v":1,"at":"2026-01-01T00:05:00.000Z","event":"claim","task":"alpha/task-04","feature":"alpha","outcome":"ok","attempt":1,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:06:00.000Z","event":"block","task":"alpha/task-04","feature":"alpha","outcome":"ok","reason":"waiting on a decision","from":"in-progress"}
+{"v":1,"at":"2026-01-01T00:07:00.000Z","event":"claim","task":"alpha/task-04","feature":"alpha","outcome":"ok","attempt":2,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:14:10.000Z","event":"check","task":"alpha/task-04","feature":"alpha","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:14:20.000Z","event":"scope","task":"alpha/task-04","feature":"alpha","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:14:30.000Z","event":"review","task":"alpha/task-04","feature":"alpha","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:15:00.000Z","event":"done","task":"alpha/task-04","feature":"alpha","outcome":"ok","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main"}
+{"v":1,"at":"2026-01-01T00:16:00.000Z","event":"run_start","task":"alpha/task-05","feature":"alpha","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:20:00.000Z","event":"claim","task":"beta/task-01","feature":"beta","outcome":"ok","attempt":1,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:20:05.000Z","event":"check","task":"beta/task-01","feature":"beta","outcome":"fail","duration_ms":90,"command":"npm test","exit":2}
+{"v":1,"at":"2026-01-01T00:21:10.000Z","event":"check","task":"beta/task-01","feature":"beta","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:21:20.000Z","event":"scope","task":"beta/task-01","feature":"beta","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:21:30.000Z","event":"review","task":"beta/task-01","feature":"beta","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:22:00.000Z","event":"retry","task":"beta/task-01","feature":"beta","outcome":"ok","attempt":2,"reason":"finding 1"}
+{"v":1,"at":"2026-01-01T00:22:10.000Z","event":"check","task":"beta/task-01","feature":"beta","outcome":"ok","duration_ms":120}
+{"v":1,"at":"2026-01-01T00:22:20.000Z","event":"scope","task":"beta/task-01","feature":"beta","outcome":"ok","files":1}
+{"v":1,"at":"2026-01-01T00:22:30.000Z","event":"review","task":"beta/task-01","feature":"beta","outcome":"ok"}
+{"v":1,"at":"2026-01-01T00:23:00.000Z","event":"retry","task":"beta/task-01","feature":"beta","outcome":"exhausted","attempt":2,"reason":"finding 2"}
+{"v":1,"at":"2026-01-01T00:24:00.000Z","event":"claim","task":"beta/task-02","feature":"beta","outcome":"ok","attempt":1,"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"v":1,"at":"2026-01-01T00:25:00.000Z","event":"block","task":"beta/task-02","feature":"beta","outcome":"ok","reason":"needs a human","from":"in-progress"}
