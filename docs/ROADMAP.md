@@ -7,6 +7,9 @@ dependency, not by date, and none of them carries a version number: versions are
 derived from Conventional Commits by `scripts/release.mjs`, so a roadmap cannot
 promise one.
 
+Each phase has an RFC under [`docs/rfcs/`](./rfcs/README.md) that describes how
+it will be built.
+
 ## Goal
 
 Make the-office a spec-driven framework that other teams can adopt for
