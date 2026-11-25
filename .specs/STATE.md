@@ -8,9 +8,9 @@ log is kept here.
 ## Handoff
 
 **Feature**: event-log-stats (RFC 0001, `docs/rfcs/0001-instrument.md`)
-**Where**: plan approved by the user on 2026-11-25; `checks.md` written and `validate_checks.py` exits 0 (43 checks, profile `light`). No test and no code written yet; C1-C43 all open.
+**Where**: built and verified on 2026-11-25. Commits `7167fdd` (feat) and `1b08c4c` (docs) over base `13f24e9`; the independent Verifier passed 43/43 checks at profile `light` and `validate_verification.py` exits 0.
 **In progress**: nothing
-**Next step**: Build. Read `.specs/features/event-log-stats/checks.md` and `plan.md`, write `tests/events.test.mjs` from the checks (never from the implementation), implement in `payload/bin/office.mjs`, run each proof, commit with Conventional Commits. After the last commit, the session holding the feature dispatches a fresh Verifier over `13f24e9..HEAD` with every check, then runs `validate_verification.py event-log-stats`.
+**Next step**: the user decides when to push `development` and merge to `main` (the merge publishes a minor release). Open follow-ups from the Verifier: C16 does not pin "takes no lock"; C31 snapshots only `.the-office/`; README and skill docs do not mention `office stats`.
 **Blockers**: none
 **Uncommitted**: none
-**Branch**: development (feature base `13f24e9`)
+**Branch**: development
