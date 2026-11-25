@@ -7,10 +7,10 @@ log is kept here.
 
 ## Handoff
 
-**Feature**: event-log-stats (RFC 0001, `docs/rfcs/0001-instrument.md`)
-**Where**: built and verified on 2026-11-25. Commits `7167fdd` (feat) and `1b08c4c` (docs) over base `13f24e9`; the independent Verifier passed 43/43 checks at profile `light` and `validate_verification.py` exits 0.
+**Feature**: headless-run (RFC 0002, `docs/rfcs/0002-headless.md`)
+**Where**: built and verified on 2026-11-25 on branch `feat/headless-run`. Commits `c2338c6` (feat!), `1f6da1a` (ci), `a74e829` (docs) over base `84e5638`; the independent Verifier passed 72/72 checks at profile `light` and `validate_verification.py` exits 0.
 **In progress**: nothing
-**Next step**: the user decides when to push `development` and merge to `main` (the merge publishes a minor release). Open follow-ups from the Verifier: C16 does not pin "takes no lock"; C31 snapshots only `.the-office/`; README and skill docs do not mention `office stats`.
+**Next step**: review and merge the PR into `development`. Open follow-ups: `office run --resume` after a non-converged plan reaches gate 2 without re-planning (auto-approves under `approvals.plan: auto`); the `headless` workflow has never run and needs the `ANTHROPIC_API_KEY` secret; `OFFICE_STEP_TIMEOUT_MS` is an undocumented override in the payload; no test feeds `claim` a `spec-approval.json` without `mode`; the merge to `main` publishes 1.0.0 unless forced with `--bump minor`.
 **Blockers**: none
 **Uncommitted**: none
-**Branch**: development
+**Branch**: feat/headless-run
