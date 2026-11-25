@@ -235,6 +235,8 @@ hooks last.
 
 - [`PLAN.md`](./PLAN.md) — the implementation plan and the reasoning behind each
   departure from the original spec.
+- [`docs/ROADMAP.md`](./docs/ROADMAP.md) — where the project goes next, and in
+  what order.
 - [`skills-requests.md`](./skills-requests.md) — the original spec, preserved.
 - [`.the-office/harness.md`](./.the-office/harness.md) — this repo's own harness,
   including its open gaps.
