@@ -3,7 +3,7 @@
 Profile: light
 Plan: `.specs/features/headless-run/plan.md`
 
-72 checks in 5 slices · 6 one-way doors · 2 open, of which 0 block (1 blocks go-live)
+74 checks in 5 slices · 6 one-way doors · 2 open, of which 0 block (1 blocks go-live)
 
 Every proof is one named test in `tests/run.test.mjs` (new; it joins the `node --test` line in
 `tests/run.sh`), run as `node --test --test-name-pattern="<name>" tests/run.test.mjs`, except the
@@ -199,6 +199,12 @@ Proof: `node --test --test-name-pattern="resume plans when there are no tasks" t
 **C55** - On a resume where `greeting/task-02` is `in-progress` and task-01 is `completed`, the first role invoked is `office-swe` with `task` `greeting/task-02`; on a resume where it is `review`, the first role invoked is `office-reviewer` for it (AC 50)
 Proof: `node --test --test-name-pattern="resume continues work in flight" tests/run.test.mjs`
 
+**C73** - With both approvals `auto`, `caps.plan_iterations: 2` and a Devil's Advocate that always prints `verdict: rejected`: the first run exits 10; `office run --resume` then invokes exactly `office-devils-advocate`, `office-planner`, `office-devils-advocate` in that order, exits 10 with `run_end` outcome `blocked`, and no `plan-approval.json` and no `approve` event with `gate: "plan"` exist (AC 71; added after verification round 1, at the user's request)
+Proof: `node --test --test-name-pattern="resume does not auto-approve a rejected plan" tests/run.test.mjs`
+
+**C74** - With both approvals `auto`, `caps.plan_iterations: 2` and a Devil's Advocate that prints `rejected`, `rejected`, then `approved`: the first run exits 10; `office run --resume` invokes `office-devils-advocate` first and `office-swe-fast` second, never `office-planner`, exits 0 with `greeting/task-01` `completed`, and `plan-approval.json` holds `mode: "policy"` and the hash `office plan status greeting` prints (AC 71)
+Proof: `node --test --test-name-pattern="resume re-reviews an unapproved plan under auto" tests/run.test.mjs`
+
 ### S4 - the ending and the cost are readable by a script · ~5 files · ~95 KB · ~24k · complete
 
 **C56** - Each ending has its exit code and exactly one `run_end` for its run id with the matching `outcome`: completed board 0 / `completed`; crashed step 1 / `failed`; blocked task with nothing ready 10 / `blocked`; unapproved human gate 11 / `awaiting_approval`; and `run_end` carries `feature: "greeting"` and `route: "feature"` in the three endings where the Judge returned (AC 52, 53)
@@ -287,6 +293,7 @@ Proof: `grep -q '^| Status | Implemented |' docs/rfcs/0002-headless.md && grep -
 | plan hash: changes that must change it (13) | C44, table-driven over all 13 | - |
 | `plan status` values (3) | `draft` C43 · `approved` C43 · `stale` C43 | - |
 | resume entry points (5) | gate 1 C47 · plan C54 · gate 2 C48 · task in flight C55 · open questions C37 | - |
+| resume at gate 2 under `auto` with an unapproved, unstarted plan (2) | Devil's Advocate rejects C73 · Devil's Advocate approves C74 | - |
 | report keys, door 6 (5) | `run` C57 · `outcome` C57 · `duration_ms` C57 · `tasks` C62 · `usage` C60 | - |
 | `usage` groupings (3) | `by_role` C60 · `by_model` C60 · `total` C60 | - |
 | config keys written by init, door 3 (6) | `run.runtime` C69 · `run.permission_mode` C69 · `run.allowed_tools` C69 · `approvals.spec` C69 · `approvals.plan` C69 · `approvals.harness` C69 | - |
@@ -334,3 +341,4 @@ Proof: `grep -q '^| Status | Implemented |' docs/rfcs/0002-headless.md && grep -
   `OFFICE_STEP_TIMEOUT_MS` overrides the step timeout for the C22 test and is documented nowhere.
   `tests/lifecycle.test.mjs` now expects `office next` to exit 12 with work in flight (AC 61)
 - **Abandoned:** nothing
+- **Added after round 1:** C73 and C74 (AC 71) close the gap where `--resume` after a non-converged plan reached gate 2 without a review; the user asked for the fix on this branch

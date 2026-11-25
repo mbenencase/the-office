@@ -52,6 +52,10 @@ flowchart TD
     RT -->|"crash, timeout, done-when unmet twice"| FAIL["run_end failed, exit 1 (door 5)"]
 ```
 
+On `--resume` the plan box is entered in two cases: the feature has no tasks, or (route `feature`,
+`approvals.plan` resolving to `auto`, no current plan approval, no task started) the existing plan
+goes back to the Devil's Advocate first, so a policy never approves a plan it rejected (AC 71).
+
 The supervisor never holds `execution.lock` while a step runs, because the role inside the step
 calls `claim`, `check`, `review`, `done`, which take it. It holds `.the-office/run.lock` (door 5)
 for the whole run instead. Where it needs a whole command rather than a function (`office validate`
@@ -211,6 +215,8 @@ After a stop, one command continues from where the board stands, with no request
 49. WHEN a run resumes THEN the CLI SHALL continue at the first unmet condition in the order gate 1, plan (only when the feature has no tasks), gate 2 (route `feature` only), tasks, steer.
 50. WHEN a run resumes and a task of the feature is `in-progress` THEN the CLI SHALL invoke that task's SWE before any other task; WHEN one is `review` THEN the CLI SHALL invoke `office-reviewer` for it first.
 51. WHEN `office run --resume` follows an exit 11 whose gate has since been approved with the current hash THEN the CLI SHALL drive the board to completion and exit 0.
+
+71. WHEN a run resumes on route `feature` with gate 2 policy `auto`, a plan approval that is missing or stale, and every task of the feature `pending` THEN the CLI SHALL invoke `office-devils-advocate` before any `office-planner`, SHALL continue the Planner and Devil's Advocate loop up to `caps.plan_iterations` reviews, SHALL write the policy approval only when the plan converges as in AC 7, and SHALL otherwise end `blocked` with exit 10.
 
 **Independent test:** `office run` to exit 11 at gate 2 with the stub, `office plan approve`, then `office run --resume`; expect exit 0.
 

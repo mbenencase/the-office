@@ -1006,6 +1006,36 @@ test('resume recovers the route', (t) => {
   assert.ok(b.out.includes('office plan approve greeting --hash'));
 });
 
+test('resume does not auto-approve a rejected plan', (t) => {
+  const f = board(t, { cfg: config({ approvals: AUTO, caps: { plan_iterations: 2 } }), scenario: { da: ['rejected'] } });
+  assert.equal(f.run(REQUEST).status, 10);
+  assert.ok(!f.exists(PLAN_APPROVAL));
+  f.clearCalls();
+  const r = f.run('--resume');
+  assert.equal(r.status, 10, r.out);
+  assert.deepEqual(f.roles(), ['office-devils-advocate', 'office-planner', 'office-devils-advocate']);
+  assert.ok(!f.exists(PLAN_APPROVAL));
+  assert.ok(!f.events().some((e) => e.event === 'approve' && e.gate === 'plan'));
+  assert.equal(lastEvent(f).event, 'run_end');
+  assert.equal(lastEvent(f).outcome, 'blocked');
+});
+
+test('resume re-reviews an unapproved plan under auto', (t) => {
+  const f = board(t, { cfg: config({ approvals: AUTO, caps: { plan_iterations: 2 } }), scenario: { da: ['rejected', 'rejected', 'approved'] } });
+  assert.equal(f.run(REQUEST).status, 10);
+  // The stub counts earlier calls to pick its verdict, so the record is kept and sliced.
+  const before = f.roles().length;
+  const r = f.run('--resume');
+  assert.equal(r.status, 0, r.out);
+  const resumed = f.roles().slice(before);
+  assert.deepEqual(resumed.slice(0, 2), ['office-devils-advocate', 'office-swe-fast']);
+  assert.ok(!resumed.includes('office-planner'));
+  const approval = JSON.parse(f.read(PLAN_APPROVAL));
+  assert.equal(approval.mode, 'policy');
+  assert.equal(approval.hash, f.planStatus().hash);
+  assert.equal(f.status(T1), 'completed');
+});
+
 test('resume with nothing to resume', (t) => {
   const f = board(t);
   const before = f.log();

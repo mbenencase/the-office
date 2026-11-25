@@ -1690,7 +1690,13 @@ cmds.run = (argv) => {
     }
     gate('spec', path.join(spec.dir, 'spec-approval.json'), spec.hash);
 
-    if (!opts.resume || !tasksOf().length) {
+    // Resuming over a plan nobody approved and no task started: under `auto`
+    // the Devil's Advocate reviews it again before the policy may approve it.
+    const planFile = path.join(spec.dir, 'plan-approval.json');
+    const review = opts.resume && route === 'feature' && gatePolicy(cfg, 'plan') === 'auto'
+      && tasksOf().length > 0 && tasksOf().every((t) => t.data.status === 'pending')
+      && readApproval(planFile)?.hash !== planHash(tasksOf());
+    if (!opts.resume || !tasksOf().length || review) {
       const planValid = () => {
         try { validateSpec(root, slug, true); } catch { return false; }
         return self('validate').status === 0;
@@ -1701,7 +1707,7 @@ cmds.run = (argv) => {
         let converged = false;
         let objections = '';
         for (let i = 0; i < cfg.caps.plan_iterations && !converged; i++) {
-          step('office-planner', planner(objections && `\n\nThe previous plan was not accepted:\n${objections}`), () => tasksOf().length > 0);
+          if (i > 0 || !review) step('office-planner', planner(objections && `\n\nThe previous plan was not accepted:\n${objections}`), () => tasksOf().length > 0);
           let verdict;
           objections = step('office-devils-advocate', `${headless}\n\nReview the plan of feature \`${slug}\`. End with exactly one line, \`verdict: approved\` or \`verdict: rejected\`.\n\nFeature slug: ${slug}`, (text) => {
             verdict = /^verdict:[ \t]*(approved|rejected)[ \t]*$/m.exec(text)?.[1];
@@ -1713,7 +1719,7 @@ cmds.run = (argv) => {
         if (!converged) end('blocked', `the plan of ${slug} did not converge within plan_iterations (${cfg.caps.plan_iterations}); a human must settle it.`);
       }
     }
-    if (route === 'feature') gate('plan', path.join(spec.dir, 'plan-approval.json'), planHash(tasksOf()));
+    if (route === 'feature') gate('plan', planFile, planHash(tasksOf()));
 
     const statusOf = (id) => tasksOf().find((t) => taskId(t) === id)?.data.status;
     const drive = (t) => {

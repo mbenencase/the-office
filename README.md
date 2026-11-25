@@ -262,6 +262,9 @@ run:
 - `auto`: the run approves as `policy:auto`. The approval file and the event log
   record `mode: policy`; a person's approval records `mode: human`, and the
   command line refuses `--by policy:*`.
+  A resumed run never auto-approves a plan it has not seen converge: when no
+  task has started and the plan is unapproved, the Devil's Advocate reviews it
+  again first.
 - A spec with open questions is never approved by the policy. The Product Owner
   cannot ask anyone, so it records an assumption or leaves the question open, and
   an open question ends the run with code `10` and the questions printed.
