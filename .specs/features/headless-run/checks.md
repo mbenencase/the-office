@@ -321,3 +321,16 @@ Proof: `grep -q '^| Status | Implemented |' docs/rfcs/0002-headless.md && grep -
   plus ~25k for the new `tests/run.test.mjs`, `tests/stub-runtime.mjs` and the supervisor itself
   = ~63k, under the 150k budget - one builder
 - Mechanism: one builder, in a new session at the user's request
+- **Boundary:** C1-C72 closed at `a74e829`; all 75 proofs ran green one by one, then
+  `bash tests/run.sh` in full. Nothing is handed on to another builder. Not exercised: the
+  `headless` workflow itself, which waits on plan question 1 (the secret; the file reads
+  `secrets.ANTHROPIC_API_KEY`) and has never run against the real runtime
+- **Settled mid-build:** a SWE step that leaves its task `blocked` is done, not `unmet` (C18 and
+  AC 14 require it; AC 10 names only `review`). C53's spec is a legacy `overview.md`: a typed spec
+  that fails `office spec validate` also fails `office validate`, so that run stops under AC 24
+  with no event. On route `feature` the Planner step is done when the feature has a task and the
+  Devil's Advocate step when it printed a `verdict:` line; convergence is judged after the pair.
+  A crash names its cause in an `error` key beside door 4's `{ exit, text, usage }`.
+  `OFFICE_STEP_TIMEOUT_MS` overrides the step timeout for the C22 test and is documented nowhere.
+  `tests/lifecycle.test.mjs` now expects `office next` to exit 12 with work in flight (AC 61)
+- **Abandoned:** nothing
