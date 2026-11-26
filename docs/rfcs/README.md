@@ -7,7 +7,7 @@ still open.
 | RFC | Phase | Status | Depends on |
 |---|---|---|---|
 | [0001 — Event log and stats](./0001-instrument.md) | 1 — Instrument | Implemented | — |
-| [0002 — Headless runs](./0002-headless.md) | 2 — Headless | Draft | 0001 |
+| [0002 — Headless runs](./0002-headless.md) | 2 — Headless | Implemented | 0001 |
 | [0003 — Golden set and benchmark](./0003-golden-set-and-benchmark.md) | 3 — Golden set and benchmark | Draft | 0001, 0002 |
 | [0004 — Ablation and tuning](./0004-ablate-and-tune.md) | 4 — Ablate and tune | Draft | 0003 |
 | [0005 — Distribution](./0005-distribute.md) | 5 — Distribute | Draft | 0001 |

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft |
+| Status | Implemented |
 | Roadmap phase | [2 — Headless](../ROADMAP.md#phase-2--headless) |
 | Depends on | [0001](./0001-instrument.md) |
 | Ships in | `payload/bin/office.mjs`, `templates/config.yml.tmpl`, `payload/skills/office/` |
@@ -267,12 +267,24 @@ computational sensors.
 3. Blocked, awaiting-approval and failed runs exit with distinct codes, each
    covered by a test against the stub.
 
+Criterion 3 is checked by `tests/run.test.mjs` on every change. Criteria 1 and 2
+are checked by the manual `headless` workflow, which needs an API key and is
+therefore proven only when someone triggers it.
+
 ## Open questions
 
-- Is changing `office next`'s exit codes worth a breaking release, or should the
-  new codes appear only on `office run` and `office next --status`?
-- Should the supervisor commit on the SWE's behalf between steps? Today `review`
-  and `done` refuse a dirty tree, and the SWE is told to commit. A supervisor
-  could make that a guarantee.
-- Does the `trivial` route need a plan approval at all, given that it has one
-  task?
+Answered when the RFC was implemented.
+
+- **Is changing `office next`'s exit codes worth a breaking release, or should
+  the new codes appear only on `office run` and `office next --status`?** It is
+  worth the break, and the commit is `feat!:`. The only callers of `office next`
+  were prompts shipped in the same payload, and they changed with it. A
+  `--status` flag would have kept two ways of asking one question.
+- **Should the supervisor commit on the SWE's behalf between steps?** No.
+  `review` already refuses a dirty tree, so a SWE step that leaves its code
+  uncommitted returns with its "done when" unmet, is retried once, and then the
+  run fails loudly. A supervisor that writes commits can be added later; one
+  that has started writing them is hard to take back.
+- **Does the `trivial` route need a plan approval at all, given that it has one
+  task?** No. The Planner writes the one task, the Devil's Advocate is not
+  invoked and gate 2 is skipped, which matches the interactive trivial path.

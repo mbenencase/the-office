@@ -25,5 +25,20 @@ gates:
 janitor:
   recurrence_threshold: 3
 
+# Headless runs (office run). permission_mode and allowed_tools are passed to
+# the runtime unchanged; anything looser than acceptEdits belongs in a container.
+run:
+  runtime: claude
+  permission_mode: acceptEdits
+  allowed_tools: []
+
+# Who approves each gate in a headless run: human stops the run with exit 11,
+# auto lets the run policy approve. harness accepts only human. A key here wins
+# over the matching gates: boolean above.
+approvals:
+  spec: human
+  plan: human
+  harness: human
+
 # Populated by `office audit`.
 stacks: []

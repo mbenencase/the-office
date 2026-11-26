@@ -50,7 +50,7 @@ expect_exit 1 "refuses a task with no checks"    "$ROOT/tests/fixtures/no-checks
 
 echo
 echo "lifecycle and verification — adversarial integration tests"
-if node --test "$ROOT/tests/lifecycle.test.mjs" "$ROOT/tests/spec.test.mjs" "$ROOT/tests/events.test.mjs"; then
+if node --test "$ROOT/tests/lifecycle.test.mjs" "$ROOT/tests/spec.test.mjs" "$ROOT/tests/events.test.mjs" "$ROOT/tests/run.test.mjs"; then
   ok "lifecycle and evidence integration suite"
 else
   bad "lifecycle and evidence integration suite"

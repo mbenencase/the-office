@@ -8,7 +8,11 @@ Execute the next ready task.
 node .claude/office/bin/office.mjs next
 ```
 
-If it exits 1, report why — work in flight, something blocked, or the board is complete — and stop.
+If it prints no task id, the exit code says why. Report it and stop:
+
+- `3` — the board is complete or empty.
+- `10` — a task is blocked and needs a human.
+- `12` — work is in flight; finish it first.
 
 Otherwise, for that task id:
 

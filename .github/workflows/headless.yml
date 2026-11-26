@@ -1,0 +1,86 @@
+name: headless
+
+# `office run` against the real runtime. It needs an API key and costs money on
+# every run, so it is never triggered by a push: only by hand.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: office run against the real runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: install the runtime
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: install the-office into a fixture repository
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          git -C "$T" init -q
+          git -C "$T" config user.email ci@example.invalid
+          git -C "$T" config user.name ci
+          mkdir -p "$T/src" "$T/test"
+          echo '{"name":"fixture","type":"module","scripts":{"test":"node --test"}}' > "$T/package.json"
+          echo 'export const greet = (name) => `Hello, ${name}!`;' > "$T/src/greet.mjs"
+          cat > "$T/test/greet.test.mjs" <<'JS'
+          import { test } from 'node:test';
+          import assert from 'node:assert/strict';
+          import { greet } from '../src/greet.mjs';
+
+          test('greet', () => assert.equal(greet('Ana'), 'Hello, Ana!'));
+          JS
+          ./install.sh "$T"
+          cd "$T"
+          ./.claude/office/bin/office init
+          # Both approvals auto: nobody is there to approve. The runner is a
+          # throwaway machine, and shell commands are allowed by name rather
+          # than by relaxing the permission mode.
+          sed -i -e 's/^  spec: human$/  spec: auto/' -e 's/^  plan: human$/  plan: auto/' \
+            -e 's/^  allowed_tools: \[\]$/  allowed_tools: ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]/' \
+            .the-office/config.yml
+          ./.claude/office/bin/office validate
+          git add -A
+          git commit -qm 'fixture with the-office installed'
+          echo "T=$T" >> "$GITHUB_ENV"
+
+      - name: office run the fixture request
+        id: run
+        working-directory: ${{ env.T }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +e
+          ./.claude/office/bin/office run "Add a farewell(name) function to src/greet.mjs that returns 'Goodbye, <name>!', with a test in test/greet.test.mjs" --report "$RUNNER_TEMP/run-report.json"
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: the run exited 0
+        run: |
+          echo "office run exited ${{ steps.run.outputs.code }}"
+          test "${{ steps.run.outputs.code }}" -eq 0
+
+      - name: every role that ran has usage in the report
+        if: always()
+        working-directory: ${{ env.T }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const events = fs.readFileSync(".the-office/events.jsonl", "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+            const roles = [...new Set(events.filter((e) => e.event === "step" && e.run === report.run).map((e) => e.role))];
+            const used = (u) => u && u.input + u.output > 0;
+            const missing = roles.filter((role) => !used(report.usage.by_role[role]));
+            console.log(JSON.stringify(report, null, 2));
+            if (!roles.length || missing.length) {
+              console.error("no token usage reported for: " + (missing.join(", ") || "any role"));
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/run-report.json"

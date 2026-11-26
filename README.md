@@ -151,6 +151,7 @@ Everything a CPU can settle lives in one zero-dependency Node CLI, not in a
 prompt:
 
 ```bash
+office run "<request>"      # drive a request to a finished board, headless
 office next                 # next ready task, dependency-ordered
 office check <id>           # run the task's executable definition of done
 office scope <id>           # assert the diff stayed inside the task's globs
@@ -219,6 +220,94 @@ This is workflow enforcement, not a security boundary against an actor who can
 edit the repository or Git metadata. Evidence does not capture ignored files,
 external services, or environment changes; rerun checks when those change.
 Submodules are currently rejected for attestation.
+
+## Headless runs
+
+`/office` is the pipeline with a model as the loop, for a person who wants to
+watch and steer. `office run` is the same pipeline with the CLI as the loop, for
+CI and unattended runs. It starts the agent runtime once per role step, checks
+the board after each one, and decides from the board which step runs.
+
+```bash
+office run "add a --json flag to the export command" --report run.json
+office run --resume     # continue the board after a stop
+```
+
+The exit code says how the run ended:
+
+| Code | Outcome | Meaning |
+|---|---|---|
+| `0` | `completed` | every task of the feature is completed |
+| `1` | `failed` | a step crashed, timed out or returned twice without doing its job, or the board is invalid |
+| `2` | — | usage error; nothing ran |
+| `10` | `blocked` | a task is blocked, the spec has open questions, or the plan did not converge: a human is needed |
+| `11` | `awaiting_approval` | a gate whose policy is `human` is not approved yet, or the request is a harness change |
+
+Who approves each gate is a policy in `.the-office/config.yml`:
+
+```yaml
+approvals:
+  spec: human      # human | auto
+  plan: human      # human | auto
+  harness: human   # human only
+run:
+  runtime: claude
+  permission_mode: acceptEdits
+  allowed_tools: []
+```
+
+- `human`, the default: the run stops with code `11` and prints the exact
+  `office spec approve` or `office plan approve` command. A person runs it, then
+  `office run --resume` continues from where the board stands.
+- `auto`: the run approves as `policy:auto`. The approval file and the event log
+  record `mode: policy`; a person's approval records `mode: human`, and the
+  command line refuses `--by policy:*`.
+  On `--resume`, when the plan is unapproved and no task has started, the
+  Devil's Advocate reviews it again before the policy may approve it. Once a
+  task has started, a resume continues the work without that review.
+- A spec with open questions is never approved by the policy. The Product Owner
+  cannot ask anyone, so it records an assumption or leaves the question open, and
+  an open question ends the run with code `10` and the questions printed.
+- A request the Judge routes to `harness` always ends with code `11`. Gate 3 is
+  approved interactively through `/office`.
+
+A key under `approvals:` wins over the matching `gates:` boolean.
+
+`--json` prints the run report on stdout and `--report <file>` writes it:
+outcome, duration, task counts, and tokens and cost by role and by model. It is
+rebuilt from the `run_start`, `step` and `run_end` lines of
+`.the-office/events.jsonl`, so the same numbers can be recomputed later.
+`--step-timeout <minutes>` (default 30) and `--max-steps <n>` (default 100)
+bound a run. One run per board at a time: `.the-office/run.lock` is held for the
+whole run, and a killed run leaves it behind for a human to remove.
+
+### In CI
+
+`permission_mode` and `allowed_tools` are passed to the runtime unchanged, as
+`--permission-mode` and `--allowedTools`. Nobody is there to answer a permission
+prompt, so whatever a role needs (the `office` CLI, the test command,
+`git commit`) has to be allowed by one of the two. Prefer naming tools:
+
+```yaml
+run:
+  permission_mode: acceptEdits
+  allowed_tools: ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
+```
+
+```yaml
+# Only inside a container. This mode lets a role run anything without asking.
+run:
+  permission_mode: bypassPermissions
+```
+
+Run that second configuration in a container that holds nothing but the
+checkout and the credentials the job itself needs. The first headless run is
+safe to try because the gates default to `human`; relaxed permissions are safe
+only because of the box around them.
+
+`OFFICE_RUNTIME_CMD` replaces the `claude` executable. The test suite points it
+at a stub; the manual `headless` workflow is the one job that runs the real
+runtime.
 
 ## Legacy repos
 
@@ -320,6 +409,10 @@ fields. Upgrade the installed CLI before using desktop status actions.
 | `install` | clean install, upgrade preserving board state, uninstall keeping `.the-office/` |
 | `docs` | every ```mermaid block in the README actually parses |
 | `packs` | each pack's config run against the real tool — ruff, eslint, gofmt/vet, rustfmt, clippy |
+
+A separate `headless` workflow runs `office run` against the real runtime on a
+fixture repository. It needs an API key and costs money, so it is triggered only
+by hand.
 
 `release` reuses this whole workflow via `workflow_call` rather than a subset,
 so what gets published is exactly what CI is green on.

@@ -2,8 +2,10 @@
 /**
  * office — the deterministic core of the-office.
  *
- * Every command in this file is pure computation: no model is involved, no
- * network call is made. Verification records the code and contract it observed.
+ * Every decision in this file is pure computation: no model is asked to decide
+ * anything, and no network call is made. `run` starts the agent runtime once per
+ * role step; which step comes next is still settled here, from the board.
+ * Verification records the code and contract it observed.
  * Anything requiring judgement belongs to an agent, not here.
  *
  * Zero dependencies by design — Claude Code guarantees Node, and nothing else.
@@ -203,6 +205,9 @@ const DEFAULT_CONFIG = {
   gates: { after_po_clarification: true, after_plan_converges: true, before_harness_change: true },
   janitor: { recurrence_threshold: 3 },
   stacks: [],
+  run: { runtime: 'claude', permission_mode: 'acceptEdits', allowed_tools: [] },
+  // No default: an absent approvals.<gate> falls back to its gates: boolean.
+  approvals: {},
 };
 
 function loadConfig(root) {
@@ -215,7 +220,33 @@ function loadConfig(root) {
     caps: { ...DEFAULT_CONFIG.caps, ...(parsed.caps || {}) },
     gates: { ...DEFAULT_CONFIG.gates, ...(parsed.gates || {}) },
     janitor: { ...DEFAULT_CONFIG.janitor, ...(parsed.janitor || {}) },
+    run: { ...DEFAULT_CONFIG.run, ...(isMap(parsed.run) ? parsed.run : {}) },
+    approvals: isMap(parsed.approvals) ? parsed.approvals : {},
   };
+}
+
+const GATE_KEYS = { spec: 'after_po_clarification', plan: 'after_plan_converges', harness: 'before_harness_change' };
+// approvals.<gate> wins; without it a gates: boolean set to false means auto.
+const gatePolicy = (cfg, gate) => cfg.approvals[gate] ?? (cfg.gates[GATE_KEYS[gate]] === false ? 'auto' : 'human');
+
+function configErrors(root) {
+  const p = path.join(root, '.the-office', 'config.yml');
+  if (!fs.existsSync(p)) return [];
+  const parsed = parseYaml(fs.readFileSync(p, 'utf8').split('\n'));
+  const out = [];
+  const bad = (key, value, want) => out.push(`.the-office/config.yml: ${key} is ${JSON.stringify(value)}; ${want}`);
+  for (const key of ['approvals', 'run']) {
+    if (Object.hasOwn(parsed, key) && !isMap(parsed[key])) bad(key, parsed[key], 'expected a map');
+  }
+  const approvals = isMap(parsed.approvals) ? parsed.approvals : {};
+  const run = isMap(parsed.run) ? parsed.run : {};
+  for (const gate of ['spec', 'plan']) {
+    if (Object.hasOwn(approvals, gate) && !['human', 'auto'].includes(approvals[gate])) bad(`approvals.${gate}`, approvals[gate], 'expected human or auto');
+  }
+  if (Object.hasOwn(approvals, 'harness') && approvals.harness !== 'human') bad('approvals.harness', approvals.harness, 'only human is accepted: no unattended run installs a harness change');
+  if (Object.hasOwn(run, 'runtime') && run.runtime !== 'claude') bad('run.runtime', run.runtime, 'only claude is supported');
+  if (Object.hasOwn(run, 'allowed_tools') && !Array.isArray(run.allowed_tools)) bad('run.allowed_tools', run.allowed_tools, 'expected a list');
+  return out;
 }
 
 function boardSchema(root) {
@@ -328,7 +359,7 @@ function git(root, args) {
 
 // Only board bookkeeping is excluded. Installed agents and harness controls are
 // code: changes to them must remain visible to scope and verification.
-const isBoardState = (f) => f.startsWith('.the-office/features/') || f === '.the-office/findings.jsonl' || f === '.the-office/events.jsonl' || f === '.the-office/execution.lock';
+const isBoardState = (f) => f.startsWith('.the-office/features/') || f === '.the-office/findings.jsonl' || f === '.the-office/events.jsonl' || f === '.the-office/execution.lock' || f === '.the-office/run.lock';
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 function gitRequired(root, args) {
   const result = git(root, args);
@@ -389,8 +420,9 @@ const SPEC_SECTIONS = {
   feature: ['User flows', 'Business rules', 'Data and integrations', 'Failure and empty states'],
   refactor: ['Structural problem', 'Change boundary', 'Behavior invariants', 'Migration strategy'],
 };
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 function featureDir(root, slug) {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug ?? '')) throw new Error('feature slug must use lowercase letters, digits, and hyphens');
+  if (!SLUG.test(slug ?? '')) throw new Error('feature slug must use lowercase letters, digits, and hyphens');
   return path.join(root, '.the-office', 'features', slug);
 }
 const meaningful = (v) => typeof v === 'string' && v.trim() && !/\bTODO\b|\{\{/.test(v);
@@ -454,9 +486,32 @@ function validateSpec(root, slug, plan = false) {
   }
   return spec;
 }
-function specApproval(spec) {
-  try { return JSON.parse(fs.readFileSync(path.join(spec.dir, 'spec-approval.json'), 'utf8')); }
+function readApproval(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch (err) { if (err.code === 'ENOENT' || err instanceof SyntaxError) return null; throw err; }
+}
+const specApproval = (spec) => readApproval(path.join(spec.dir, 'spec-approval.json'));
+// A gate is satisfied by this file while its hash equals the current hash of
+// what it approved. `mode` says whether a human or the run policy wrote it.
+function writeApproval(root, file, { gate, feature, hash, by, mode }) {
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify({ hash, by, at: new Date().toISOString(), mode }, null, 2) + '\n');
+  fs.renameSync(`${file}.tmp`, file);
+  logEvent(root, 'approve', { feature }, 'ok', { gate, by, mode, hash });
+}
+// Only the supervisor may approve as a policy; a shell cannot claim to be one.
+function humanApprover(by) {
+  if (!by?.trim()) die('approval requires the exact current --hash and a non-empty --by after human confirmation');
+  if (by.trim().startsWith('policy:')) die('--by policy:* is reserved for the approval policy applied by office run.');
+  return by;
+}
+// The task contract `snapshot` attests. The plan hash covers these keys only,
+// so a lifecycle command (status, attempts, notes) never stales a plan approval.
+const CONTRACT_KEYS = ['id', 'title', 'tier', 'depends_on', 'scope', 'checks', 'dod', 'max_attempts', 'requirements', 'acceptance_criteria', 'verification_mode'];
+const taskContract = (t) => Object.fromEntries(CONTRACT_KEYS.map((key) => [key, t.data[key]]));
+const taskId = (t) => t.data.id ?? t.expectedId;
+function planHash(tasks) {
+  const sorted = [...tasks].sort((a, b) => (taskId(a) < taskId(b) ? -1 : taskId(a) > taskId(b) ? 1 : 0));
+  return digest(JSON.stringify(sorted.map((t) => [taskId(t), taskContract(t)])));
 }
 function requireSpec(root, t) {
   if (!readSpec(root, t.feature)) return null;
@@ -482,8 +537,7 @@ function snapshot(root, t) {
       return [f, stat.mode, digest(stat.isSymbolicLink() ? fs.readlinkSync(full) : fs.readFileSync(full))];
     } catch (err) { if (err.code === 'ENOENT') return [f, null]; throw err; }
   });
-  const contract = Object.fromEntries(['id', 'title', 'tier', 'depends_on', 'scope', 'checks', 'dod', 'max_attempts', 'requirements', 'acceptance_criteria', 'verification_mode'].map((key) => [key, t.data[key]]));
-  return { base, head, spec: requireSpec(root, t), contract: digest(JSON.stringify(contract)), tree: digest(JSON.stringify(hashes)) };
+  return { base, head, spec: requireSpec(root, t), contract: digest(JSON.stringify(taskContract(t))), tree: digest(JSON.stringify(hashes)) };
 }
 function readEvidence(root, t) {
   try { return JSON.parse(fs.readFileSync(evidencePath(root, t), 'utf8')); }
@@ -611,6 +665,21 @@ gates:
 janitor:
   recurrence_threshold: 3
 
+# Headless runs (office run). permission_mode and allowed_tools are passed to
+# the runtime unchanged; anything looser than acceptEdits belongs in a container.
+run:
+  runtime: claude
+  permission_mode: acceptEdits
+  allowed_tools: []
+
+# Who approves each gate in a headless run: human stops the run with exit 11,
+# auto lets the run policy approve. harness accepts only human. A key here wins
+# over the matching gates: boolean above.
+approvals:
+  spec: human
+  plan: human
+  harness: human
+
 # Populated by \`office audit\`.
 stacks: []
 `);
@@ -660,29 +729,35 @@ cmds.board = (argv) => {
   console.log(`\n${c.dim(`${done}/${tasks.length} completed`)}${blocked ? c.red(`  ${blocked} blocked`) : ''}`);
 };
 
-cmds.next = () => {
-  const root = requireRoot();
-  const tasks = loadTasks(root);
-  const byId = new Map(tasks.map((t) => [t.data.id ?? t.expectedId, t]));
-  requireIdle(tasks);
-  const ready = tasks
+// The ready-task rule: pending, every dependency completed, lowest task_no first.
+function readyTasks(tasks) {
+  const byId = new Map(tasks.map((t) => [taskId(t), t]));
+  return tasks
     .filter((t) => t.data.status === 'pending')
     .filter((t) => (t.data.depends_on ?? []).every((d) => byId.get(d)?.data.status === 'completed'))
     .sort((a, b) => (a.data.task_no ?? 0) - (b.data.task_no ?? 0));
+}
 
+// Exit code says why there is no task: 12 in flight, 10 blocked, 3 complete or empty.
+cmds.next = () => {
+  const root = requireRoot();
+  const tasks = loadTasks(root);
+  if (tasks.some((t) => ['in-progress', 'review'].includes(t.data.status))) {
+    console.error(c.yellow('no ready task — work is in flight. Sequential execution: finish it first.'));
+    process.exit(12);
+  }
+  const ready = readyTasks(tasks);
   if (!ready.length) {
     const blocked = tasks.filter((t) => t.data.status === 'blocked');
     if (blocked.length) {
       console.error(c.red('no ready task — these are blocked and need a human:'));
       for (const t of blocked) console.error(`  ${t.data.id}`);
-    } else if (tasks.some((t) => ['in-progress', 'review'].includes(t.data.status))) {
-      console.error(c.yellow('no ready task — work is in flight. Sequential execution: finish it first.'));
-    } else {
-      console.error(c.dim('no ready task — board is complete or empty.'));
+      process.exit(10);
     }
-    process.exit(1);
+    console.error(c.dim('no ready task — board is complete or empty.'));
+    process.exit(3);
   }
-  console.log(ready[0].data.id ?? ready[0].expectedId);
+  console.log(taskId(ready[0]));
 };
 
 cmds.claim = (argv) => {
@@ -809,7 +884,7 @@ cmds.validate = () => {
   const root = requireRoot();
   console.log(`board schema ${boardSchema(root)}, CLI schema ${SCHEMA}`);
   const tasks = loadTasks(root);
-  const errors = [];
+  const errors = configErrors(root);
   const warnings = [];
   const seen = new Map();
 
@@ -1285,12 +1360,30 @@ cmds.spec = (argv) => {
   if (action === 'approve') {
     const flag = (key) => { const i = argv.indexOf(`--${key}`); return i < 0 ? null : argv[i + 1]; };
     if (spec.data.open_questions.length) die('resolve open_questions before approval; record resolved decisions or accepted assumptions in the spec');
-    if (flag('hash') !== spec.hash || !flag('by')?.trim()) die('approval requires the exact current --hash and a non-empty --by after human confirmation');
-    const file = path.join(spec.dir, 'spec-approval.json');
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify({ hash: spec.hash, by: flag('by'), at: new Date().toISOString() }, null, 2) + '\n');
-    fs.renameSync(`${file}.tmp`, file);
+    if (flag('hash') !== spec.hash) die('approval requires the exact current --hash and a non-empty --by after human confirmation');
+    writeApproval(root, path.join(spec.dir, 'spec-approval.json'), { gate: 'spec', feature: slug, hash: spec.hash, by: humanApprover(flag('by')), mode: 'human' });
   }
   console.log(JSON.stringify({ id: slug, type: spec.data.type, hash: spec.hash, status: specApproval(spec)?.hash === spec.hash ? 'approved' : specApproval(spec) ? 'stale' : 'draft', open_questions: spec.data.open_questions.length }));
+};
+
+// Gate 2 as a file. `claim` does not read it; only `office run` does.
+cmds.plan = (argv) => {
+  const root = requireRoot();
+  const [action, slug] = argv;
+  if (!['status', 'approve'].includes(action)) die('usage: office plan status|approve <slug> [--hash SHA --by NAME]');
+  const dir = featureDir(root, slug);
+  if (!fs.existsSync(dir)) die(`no feature "${slug}".`);
+  const tasks = loadTasks(root, slug);
+  const hash = planHash(tasks);
+  const file = path.join(dir, 'plan-approval.json');
+  if (action === 'approve') {
+    const flag = (key) => { const i = argv.indexOf(`--${key}`); return i < 0 ? null : argv[i + 1]; };
+    validateSpec(root, slug, true);
+    if (flag('hash') !== hash) die('approval requires the exact current --hash (see office plan status) and a non-empty --by after human confirmation');
+    writeApproval(root, file, { gate: 'plan', feature: slug, hash, by: humanApprover(flag('by')), mode: 'human' });
+  }
+  const approval = readApproval(file);
+  console.log(JSON.stringify({ id: slug, hash, status: approval?.hash === hash ? 'approved' : approval ? 'stale' : 'draft', tasks: tasks.length }));
 };
 
 cmds.feature = (argv) => {
@@ -1356,6 +1449,324 @@ commit: null
   console.log(c.yellow('checks is empty — office validate will reject this until the DoD is executable.'));
 };
 
+/* ------------------------------------------------------------------ *
+ * run — the headless supervisor
+ *
+ * A loop over the board: read it, pick one step, start the runtime for that
+ * step, read the board again. The model works inside a step; this code
+ * decides which step is next and whether the last one did what it owed.
+ * ------------------------------------------------------------------ */
+
+const RUN_USAGE = `usage: office run "<request>" [--feature <slug>] [--json] [--report <file>] [--step-timeout <minutes>] [--max-steps <n>]
+       office run --resume [--feature <slug>] [--json] [--report <file>] [--step-timeout <minutes>] [--max-steps <n>]
+
+  --feature <slug>          the feature to create (with a request) or to continue (with --resume)
+  --json                    print the run report as one JSON object on stdout
+  --report <file>           also write the run report to a file
+  --step-timeout <minutes>  kill a role step that runs longer (default 30)
+  --max-steps <n>           runtime invocations one run may start (default 100)
+
+exit codes: 0 completed, 1 failed, 2 usage error, 10 blocked, 11 awaiting approval`;
+
+const RUN_EXIT = { completed: 0, failed: 1, blocked: 10, awaiting_approval: 11 };
+const SWE_ROLE = { fast: 'office-swe-fast', standard: 'office-swe', deep: 'office-swe-deep' };
+const USAGE_KEYS = { input: 'inputTokens', output: 'outputTokens', cache_read: 'cacheReadInputTokens', cache_write: 'cacheCreationInputTokens', cost_usd: 'costUSD' };
+const zeroUsage = () => Object.fromEntries(Object.keys(USAGE_KEYS).map((k) => [k, 0]));
+const addUsage = (into, u) => { for (const k of Object.keys(USAGE_KEYS)) into[k] += u[k] ?? 0; return into; };
+
+function runUsageError(message) {
+  console.error(`${c.red('office:')} ${message}\n\n${RUN_USAGE}`);
+  process.exit(2);
+}
+
+function onPath(cmd) {
+  const runnable = (p) => { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; } };
+  if (cmd.includes('/')) return runnable(cmd);
+  return (process.env.PATH ?? '').split(path.delimiter).filter(Boolean).some((d) => runnable(path.join(d, cmd)));
+}
+
+// The only code that knows the runtime's flags and the names of its result
+// fields. A missing field is an error here, never a zero in the report.
+const RUNTIMES = {
+  claude: (run) => ({
+    name: 'claude',
+    cmd: process.env.OFFICE_RUNTIME_CMD || 'claude',
+    available() { return onPath(this.cmd); },
+    invoke({ role, prompt, cwd, timeoutMs }) {
+      const args = ['-p', prompt, '--agent', role, '--output-format', 'json', '--permission-mode', String(run.permission_mode)];
+      if (run.allowed_tools.length) args.push('--allowedTools', ...run.allowed_tools.map(String));
+      const r = spawnSync(this.cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 256 * 1024 * 1024 });
+      const fail = (error, more = {}) => ({ exit: r.status, text: '', usage: null, error, ...more });
+      if (r.error?.code === 'ETIMEDOUT') return fail(`no result within ${timeoutMs} ms; the process was killed`, { timedOut: true });
+      if (r.error) return fail(`cannot run ${this.cmd}: ${r.error.message}`);
+      if (r.status !== 0) return fail(`${this.cmd} exited ${r.status ?? r.signal}`);
+      let out;
+      try { out = JSON.parse(r.stdout); } catch { /* reported below */ }
+      if (!isMap(out)) return fail('the runtime did not print one JSON object on stdout');
+      let usage = null;
+      if (isMap(out.modelUsage)) {
+        usage = { ...zeroUsage(), by_model: {} };
+        for (const [model, m] of Object.entries(out.modelUsage)) {
+          const one = {};
+          for (const [key, field] of Object.entries(USAGE_KEYS)) {
+            if (typeof m?.[field] !== 'number') return fail(`modelUsage.${model}.${field} is missing from the runtime result`);
+            one[key] = m[field];
+          }
+          usage.by_model[model] = one;
+          addUsage(usage, one);
+        }
+      }
+      const text = typeof out.result === 'string' ? out.result : '';
+      if (out.is_error === true) return { ...fail(`the runtime returned is_error: true${text ? ` (${text.slice(0, 200)})` : ''}`), usage };
+      if (!usage) return fail('the runtime result has no modelUsage object');
+      return { exit: 0, text, usage };
+    },
+  }),
+};
+
+function parseRunArgs(argv) {
+  const opts = { request: null, resume: false, feature: null, json: false, report: null, stepTimeout: 30, maxSteps: 100 };
+  const value = (flag, i) => argv[i] ?? runUsageError(`${flag} requires a value.`);
+  const positive = (flag, v) => (/^[1-9]\d*$/.test(v) ? Number(v) : runUsageError(`${flag} must be a positive integer, got "${v}".`));
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--resume') opts.resume = true;
+    else if (a === '--json') opts.json = true;
+    else if (a === '--feature') opts.feature = value(a, ++i);
+    else if (a === '--report') opts.report = value(a, ++i);
+    else if (a === '--step-timeout') opts.stepTimeout = positive(a, value(a, ++i));
+    else if (a === '--max-steps') opts.maxSteps = positive(a, value(a, ++i));
+    else if (a.startsWith('--')) runUsageError(`unknown flag ${a}.`);
+    else if (opts.request === null) opts.request = a;
+    else runUsageError('give the request as one quoted argument.');
+  }
+  if (opts.request !== null && !opts.request.trim()) opts.request = null;
+  if (opts.resume && opts.request !== null) runUsageError('give a request or --resume, not both.');
+  if (!opts.resume && opts.request === null) runUsageError('give a request, or --resume to continue the board.');
+  if (opts.feature !== null && !SLUG.test(opts.feature)) runUsageError(`--feature "${opts.feature}" is not a slug of lowercase letters, digits, and hyphens.`);
+  return opts;
+}
+
+// Rebuilt from the log alone (plus the board for task counts): the run keeps no
+// state anywhere else, so the same numbers can be recomputed later.
+function runReport(root, run) {
+  const events = readEventLines(root).map((l) => l.value).filter((e) => isMap(e) && e.run === run);
+  const start = events.find((e) => e.event === 'run_start');
+  const end = events.findLast((e) => e.event === 'run_end');
+  const by_role = {}, by_model = {}, total = zeroUsage();
+  for (const e of events) {
+    if (e.event !== 'step') continue;
+    by_role[e.role] ??= zeroUsage();
+    if (!e.usage) continue;
+    addUsage(by_role[e.role], e.usage);
+    addUsage(total, e.usage);
+    for (const [model, u] of Object.entries(e.usage.by_model ?? {})) addUsage(by_model[model] ??= zeroUsage(), u);
+  }
+  const tasks = end.feature ? loadTasks(root, end.feature) : [];
+  const count = (status) => tasks.filter((t) => t.data.status === status).length;
+  return {
+    run,
+    outcome: end.outcome,
+    duration_ms: Date.parse(end.at) - Date.parse(start.at),
+    tasks: { completed: count('completed'), blocked: count('blocked') },
+    usage: { by_role, by_model, total },
+  };
+}
+
+cmds.run = (argv) => {
+  const opts = parseRunArgs(argv);
+  const root = requireRoot();
+  if (!opts.resume && opts.feature && fs.existsSync(featureDir(root, opts.feature))) {
+    runUsageError(`feature "${opts.feature}" already exists; continue it with --resume --feature ${opts.feature}.`);
+  }
+  const self = (...args) => spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...args], { cwd: root, encoding: 'utf8' });
+  const valid = self('validate');
+  if (valid.status !== 0) {
+    process.stderr.write(valid.stderr);
+    die('the board does not pass office validate; a run starts only from a valid board.');
+  }
+  const cfg = loadConfig(root);
+  const runtime = RUNTIMES[cfg.run.runtime](cfg.run);
+
+  // Held for the whole run. Not execution.lock: the role inside a step calls
+  // claim, check, review and done, and each of those takes that one.
+  const lock = path.join(root, '.the-office', 'run.lock');
+  try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); }
+  catch (err) {
+    if (err.code === 'EEXIST') die('another run owns .the-office/run.lock. If its process has exited, remove the stale lock and retry.');
+    throw err;
+  }
+  process.on('exit', () => fs.rmSync(lock, { force: true }));
+  if (!runtime.available()) die(`cannot start the runtime: "${runtime.cmd}" is not an executable on PATH. Install it or set OFFICE_RUNTIME_CMD.`);
+
+  let slug = opts.feature;
+  let route = null;
+  if (opts.resume) {
+    const ends = readEventLines(root).map((l) => l.value).filter((e) => isMap(e) && e.event === 'run_end' && typeof e.feature === 'string');
+    slug ??= ends.at(-1)?.feature ?? runUsageError('nothing to resume: no earlier run names a feature. Pass --feature <slug>.');
+    if (!SLUG.test(slug) || !fs.existsSync(featureDir(root, slug))) runUsageError(`nothing to resume: no feature "${slug}" on the board.`);
+    route = ends.findLast((e) => e.feature === slug)?.route === 'trivial' ? 'trivial' : 'feature';
+  }
+
+  const run = `r-${new Date().toISOString().replace(/[-:.]/g, '')}`;
+  const about = () => ({ run, ...(slug ? { feature: slug } : {}) });
+  const say = (line) => console.error(line);
+  logEvent(root, 'run_start', about(), 'ok', { request_hash: opts.resume ? null : digest(opts.request), runtime: runtime.name });
+  say(`run ${run} started${slug ? ` on ${slug}` : ''}`);
+
+  let ended = false;
+  const end = (outcome, message) => {
+    if (message) say(message);
+    logEvent(root, 'run_end', { ...about(), ...(route ? { route } : {}) }, outcome);
+    ended = true; // exactly one run_end per run, whatever fails after this line
+    const report = runReport(root, run);
+    const json = JSON.stringify(report, null, 2);
+    if (opts.report) fs.writeFileSync(path.resolve(opts.report), `${json}\n`);
+    if (opts.json) console.log(json);
+    else {
+      console.log(`run ${run} ${outcome} in ${fmtMs(report.duration_ms)} — ${report.tasks.completed} task(s) completed, ${report.tasks.blocked} blocked\n`);
+      const row = (name, u) => [name, u.input, u.output, u.cache_read, u.cache_write, u.cost_usd.toFixed(4)];
+      table(['ROLE', 'INPUT', 'OUTPUT', 'CACHE READ', 'CACHE WRITE', 'COST USD'],
+        [...Object.entries(report.usage.by_role).map(([role, u]) => row(role, u)), row('total', report.usage.total)]);
+    }
+    process.exit(RUN_EXIT[outcome]);
+  };
+
+  const timeoutMs = Number(process.env.OFFICE_STEP_TIMEOUT_MS) > 0 ? Number(process.env.OFFICE_STEP_TIMEOUT_MS) : opts.stepTimeout * 60000;
+  let invocations = 0;
+  // One runtime process per attempt, one `step` event per process. A clean
+  // return that leaves `done` unmet is retried once; a crash or a timeout is not.
+  const step = (role, prompt, done, task) => {
+    for (let attempt = 1; ; attempt++) {
+      if (invocations >= opts.maxSteps) end('failed', `--max-steps ${opts.maxSteps} reached; ${role} was not started.`);
+      invocations += 1;
+      const who = { ...about(), role, ...(task ? { task } : {}) };
+      const started = Date.now();
+      const r = runtime.invoke({ role, prompt, cwd: root, timeoutMs });
+      const outcome = r.timedOut ? 'timeout' : r.error ? 'crashed' : done(r.text) ? 'ok' : 'unmet';
+      const duration_ms = Date.now() - started;
+      logEvent(root, 'step', who, outcome, { duration_ms, usage: r.usage });
+      say(`step ${invocations}: ${role}${task ? ` ${task}` : ''} ${outcome} in ${fmtMs(duration_ms)}`);
+      if (outcome === 'ok') return r.text;
+      if (outcome !== 'unmet') end('failed', `${role} ${outcome}: ${r.error}.`);
+      if (attempt === 2) end('failed', `${role} returned twice without meeting its done-when condition.`);
+    }
+  };
+
+  const headless = 'This is a headless run of the-office: nobody is at the keyboard. Do not ask questions and do not wait for confirmation. Never call `office spec approve` or `office plan approve`; the supervisor applies the approval policy and checks the board after you return.';
+  const tasksOf = () => loadTasks(root, slug);
+  const gate = (name, file, hash) => {
+    if (readApproval(file)?.hash === hash) return;
+    if (gatePolicy(cfg, name) !== 'auto') {
+      end('awaiting_approval', `gate ${name === 'spec' ? 1 : 2}: the ${name} of ${slug} awaits a human approval. After reviewing it:\n  office ${name} approve ${slug} --hash ${hash} --by NAME\nthen continue with: office run --resume`);
+    }
+    writeApproval(root, file, { gate: name, feature: slug, hash, by: 'policy:auto', mode: 'policy' });
+    say(`gate ${name === 'spec' ? 1 : 2}: ${name} approved by policy:auto`);
+  };
+
+  try {
+    if (!opts.resume) {
+      let judged = null;
+      step('office-judge', `${headless}\n\nRoute this request. End with your usual block: one \`route:\` line and, unless the route is harness, one \`feature_slug:\` line.\n\nRequest: ${opts.request}`, (text) => {
+        const routes = [...text.matchAll(/^route:[ \t]*(.*?)[ \t]*$/gm)].map((m) => m[1]);
+        const named = /^feature_slug:[ \t]*(\S+)[ \t]*$/m.exec(text)?.[1] ?? '';
+        const feature = opts.feature ?? (SLUG.test(named) ? named : null);
+        if (routes.length !== 1 || !['harness', 'trivial', 'feature'].includes(routes[0])) return false;
+        if (routes[0] !== 'harness' && !feature) return false;
+        judged = { route: routes[0], feature };
+        return true;
+      });
+      route = judged.route;
+      slug = judged.feature;
+      if (route === 'harness') end('awaiting_approval', 'the Judge routed this request to harness. A harness change is approved interactively through /office; no headless run installs one.');
+      step('office-product-owner', `${headless}\n\nWrite the typed spec for the request below as feature \`${slug}\`: create it with \`office feature new ${slug} --type <bug|feature|refactor>\` if it does not exist, fill every section, and return when \`office spec validate ${slug}\` passes. Where the request is ambiguous, record a reasonable assumption under Assumptions, or leave the question in open_questions and stop.\n\nFeature slug: ${slug}\nRequest: ${opts.request}`, () => {
+        try { validateSpec(root, slug); return true; } catch { return false; }
+      });
+    }
+
+    const spec = validateSpec(root, slug);
+    if (spec.data.open_questions.length) {
+      end('blocked', `the spec of ${slug} has open questions; answer them in overview.md, then: office run --resume\n${spec.data.open_questions.map((q) => `  - ${q}`).join('\n')}`);
+    }
+    gate('spec', path.join(spec.dir, 'spec-approval.json'), spec.hash);
+
+    // Resuming over a plan nobody approved and no task started: under `auto`
+    // the Devil's Advocate reviews it again before the policy may approve it.
+    const planFile = path.join(spec.dir, 'plan-approval.json');
+    const review = opts.resume && route === 'feature' && gatePolicy(cfg, 'plan') === 'auto'
+      && tasksOf().length > 0 && tasksOf().every((t) => t.data.status === 'pending')
+      && readApproval(planFile)?.hash !== planHash(tasksOf());
+    if (!opts.resume || !tasksOf().length || review) {
+      const planValid = () => {
+        try { validateSpec(root, slug, true); } catch { return false; }
+        return self('validate').status === 0;
+      };
+      const planner = (extra = '') => `${headless}\n\nPlan feature \`${slug}\` from its approved spec: create its tasks and return when \`office spec validate ${slug} --plan\` and \`office validate\` pass.${extra}\n\nFeature slug: ${slug}`;
+      if (route === 'trivial') step('office-planner', planner(' This is a trivial change: one task.'), planValid);
+      else {
+        let converged = false;
+        let objections = '';
+        for (let i = 0; i < cfg.caps.plan_iterations && !converged; i++) {
+          if (i > 0 || !review) step('office-planner', planner(objections && `\n\nThe previous plan was not accepted:\n${objections}`), () => tasksOf().length > 0);
+          let verdict;
+          objections = step('office-devils-advocate', `${headless}\n\nReview the plan of feature \`${slug}\`. End with exactly one line, \`verdict: approved\` or \`verdict: rejected\`.\n\nFeature slug: ${slug}`, (text) => {
+            verdict = /^verdict:[ \t]*(approved|rejected)[ \t]*$/m.exec(text)?.[1];
+            return Boolean(verdict);
+          });
+          converged = verdict === 'approved' && planValid();
+          if (verdict === 'approved' && !converged) objections = '`office spec validate --plan` or `office validate` fails on the plan as written.';
+        }
+        if (!converged) end('blocked', `the plan of ${slug} did not converge within plan_iterations (${cfg.caps.plan_iterations}); a human must settle it.`);
+      }
+    }
+    if (route === 'feature') gate('plan', planFile, planHash(tasksOf()));
+
+    const statusOf = (id) => tasksOf().find((t) => taskId(t) === id)?.data.status;
+    const drive = (t) => {
+      const id = taskId(t);
+      for (let pairs = 0; ;) {
+        if (['pending', 'in-progress'].includes(statusOf(id))) {
+          step(SWE_ROLE[t.data.tier], `${headless}\n\nImplement the task below under the SWE protocol: claim it if it is pending, commit the implementation, run check and scope, and hand it to review.${pairs ? ' The Reviewer sent it back; its findings are in the task notes.' : ''} If you cannot finish, block it with a reason.\n\nTask: ${id}`,
+            () => ['review', 'blocked'].includes(statusOf(id)), id);
+        }
+        if (statusOf(id) !== 'review') return;
+        step('office-reviewer', `${headless}\n\nReview the task below and finish with \`office done\`, \`office retry\` or \`office block\`.\n\nTask: ${id}`,
+          () => ['completed', 'in-progress', 'blocked'].includes(statusOf(id)), id);
+        if (statusOf(id) !== 'in-progress') return;
+        pairs += 1;
+        if (pairs >= cfg.caps.review_iterations) {
+          const blocked = self('block', id, '--reason', 'review_iterations exhausted');
+          if (blocked.status !== 0) throw new Error(`could not block ${id}: ${blocked.stderr.trim()}`);
+          say(`blocked ${id}: review_iterations exhausted`);
+          return;
+        }
+      }
+    };
+    for (;;) {
+      const mine = tasksOf();
+      // Work already in flight first; then the ready-task rule of `office next`.
+      const next = mine.find((t) => t.data.status === 'in-progress') ?? mine.find((t) => t.data.status === 'review')
+        ?? readyTasks(loadTasks(root)).find((t) => t.feature === slug);
+      if (!next) break;
+      drive(next);
+    }
+
+    const final = tasksOf();
+    if (final.length && final.every((t) => t.data.status === 'completed')) {
+      if (self('findings', 'recur').status === 0) {
+        step('office-janitor', `${headless}\n\nA finding class has reached the recurrence threshold (\`office findings recur\`). Propose the computational control that would catch it; install nothing.\n\nFeature slug: ${slug}`, () => true);
+      }
+      end('completed');
+    }
+    const blocked = final.filter((t) => t.data.status === 'blocked').map(taskId);
+    if (blocked.length) end('blocked', `no ready task; blocked and waiting for a human: ${blocked.join(', ')}`);
+    end('failed', `no task of ${slug} is ready, none is blocked, and the board is not complete.`);
+  } catch (err) {
+    if (ended) throw err;
+    end('failed', `${c.red('office:')} ${err.message}`);
+  }
+};
+
 cmds.version = () => console.log(VERSION);
 cmds.capabilities = () => console.log(JSON.stringify({ lifecycle: 1, verification: 1 }));
 
@@ -1365,7 +1776,8 @@ cmds.help = () => {
 ${c.dim('board')}
   init [--force]              scaffold .the-office/ in this repo
   board [feature]             render the kanban
-  next                        print the next ready task id (exit 1 if none)
+  next                        print the next ready task id; exit 3 when the board is
+                              complete or empty, 10 when blocked, 12 when work is in flight
   validate                    schema, duplicate ids, orphan deps, cycles, event log
   stats [feature] [--json]    cycle time, lead time, check rate, retries, escalations
 
@@ -1389,13 +1801,24 @@ ${c.dim('harness')}
   findings recur              classes at or over the recurrence threshold
   findings list               the whole ledger
 
+${c.dim('headless')}
+  run "<request>" [--feature <slug>] [--json] [--report <file>]
+      [--step-timeout <minutes>] [--max-steps <n>]
+                              drive a request to a finished board, one runtime
+                              process per role step; the board picks each step
+  run --resume [--feature <slug>]
+                              continue the board from where it stands
+                              exit 0 completed, 1 failed, 2 usage error,
+                              10 blocked, 11 awaiting approval
+
 ${c.dim('scaffolding')}
   spec validate|status <slug> [--plan]
   spec approve <slug> --hash SHA --by NAME
+  plan approve|status <slug> [--hash SHA --by NAME]
   feature new <slug> [--type bug|feature|refactor] [--title "..."]
   task new <feature> --title "..." [--tier fast|standard|deep]
 
-${c.dim('Nothing here uses a model. If a decision needs judgement, it belongs to an agent.')}`);
+${c.dim('Nothing here asks a model to decide anything. If a decision needs judgement, it belongs to an agent.')}`);
 };
 
 /* ------------------------------------------------------------------ */
@@ -1411,7 +1834,7 @@ try {
   }
   // Serialize state/evidence writes across CLI processes, including long checks.
   // A killed process leaves an explicit lock; never silently steal a live run.
-  if (['claim', 'retry', 'review', 'done', 'block', 'check', 'scope', 'feature', 'task'].includes(cmd) || (cmd === 'spec' && rest[0] === 'approve')) {
+  if (['claim', 'retry', 'review', 'done', 'block', 'check', 'scope', 'feature', 'task'].includes(cmd) || (['spec', 'plan'].includes(cmd) && rest[0] === 'approve')) {
     const root = requireRoot();
     const lock = path.join(root, '.the-office', 'execution.lock');
     let fd;
